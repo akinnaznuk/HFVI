@@ -35,6 +35,7 @@ This code can be adjusted for other case studies by changing the input data for 
 To use the scripts in this repository, clone the repository:
    ```sh
    git clone https://github.com/akinnaznuk/HFVI.git
+   ```
 
 ## Credits
 Kunz, Annika. (2024). "Developing a Spatially Explicit Humanitarian Flood Vulnerability Index for Refugee Camps using Fuzzy Multi-Criteria Decision Analysis". GitHub repository. https://github.com/akinnaznuk/HFVI

@@ -1,4 +1,4 @@
-# AHP, FAHP, and HFVI Analysis
+# Humanitarian Flood Vulnerability Index (HFVI): Weight calculation and Case Study Application & Analysis
 This repository contains code and documentation of the master thesis:
 "Developing a Spatially Explicit Humanitarian Flood Vulnerability Index for Refugee Camps using Fuzzy Multi-Criteria Decision Analysis"
 and contains the files for the Analytical Hierarchy Process (AHP), Fuzzy Analytical Hierarchy Process (FAHP), 

@@ -5,6 +5,9 @@ date: "2024-04-02"
 output: html_document
 ---
 
+This code calculates the Fuzzy AHP weights based on the PCMs generated in the AHP.Rmd. It fuzzifies the inconsistency-corrected AHP PCMs and calculates individual and aggregates fuzzy weights and a final deffuzified value, which serves as final weight input for the HFVI calculation (HFVI.Rmd)
+
+
 ```{r setup, include=FALSE, warning = F}
 knitr::opts_chunk$set(echo = TRUE)
 knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
@@ -312,11 +315,8 @@ print(agg_fuzz_w_dom)
 
 Apply Buckley’s geomean method to calculate the fuzzy weights. This involves multiplying the ﬁrst value of the triangular fuzzy scale of each column with one another to the root of 1/n, where n is the number of variables, and a is the ﬁrst integer corresponding to the triangular fuzzy value set a1, a2, a3 of proxy i; i.e., ri = [ai1 × ai2 × . . . × ain]1/n. Then the geomean is utilized to aggregate the values of these columns.
 
-```{r}
-#pcm_dom_fuzzy
-```
 
-```{r}
+```{r Testing prodecure for a single FPCM}
 
 # Start with testing this for the first FPCM of phy
 
@@ -368,7 +368,7 @@ kable(ri_merged) %>% kable_styling()
 ```
 The next step is to calculate the fuzzy weights wi. In order to calculate the fuzzy weights, the researcher needs to calculate the sum of each column ri, and then multiply the inverse of ri to the value 
 
-```{r}
+```{r Calculate fuzzy weight of test PCM}
 # Calculate the sum of each ri column (rMin, rModal, rMax)
 column_sums <- colSums(ri_merged[, c("rMin", "rModal", "rMax")])
 
@@ -388,7 +388,7 @@ names(inverse_sum) <- c("rMin", "rModal", "rMax")
 print(inverse_sum)
 ```
 
-```{r Fuzzy weights}
+```{r Fuzzy weights caculation for test PCM}
 # Initialize an empty data frame to store the fuzzy weights
 fuzzy_weights <- data.frame(variable = character(), wMin = numeric(), wModal = numeric(), wMax = numeric(), stringsAsFactors = FALSE)
 
@@ -440,7 +440,7 @@ We are left with three columns that represent the fuzzy weights of the triangula
 The last step in the FAHP method is to defuzzy or normalize the weights. This includes calculating the average of the fuzzy weights for each proxy, i.e., defuzziﬁed. The
 defuzziﬁed weights are the ﬁnal weights to be applied to the composite index after being subjected to the FAHP method.
 
-# Try to loop this process to have all FPCMs of all experts
+# Looping this process to have all FPCMs of all experts
 
 ## SOC
 
@@ -558,7 +558,6 @@ print(fuzzy_aggregated_soc)
 kable(fuzzy_aggregated_soc) %>% kable_styling()
 ```
 
-
 ## PHY
 
 ```{r Fuzzy individual w: PHY}
@@ -672,10 +671,9 @@ print(fuzzy_aggregated_phy)
 kable(fuzzy_aggregated_phy) %>% kable_styling()
 ```
 
-
 ## DOM
 
-```{r}
+```{r DOM test}
 
 # Start with testing this for the first FPCM of dom
 
@@ -839,17 +837,6 @@ print(fuzzy_aggregated_dom)
 kable(fuzzy_aggregated_dom) %>% kable_styling()
 ```
 
-```{r}
-# resacle DOM values 
-```
-
-
-## ---
-
-```{r}
-str(fuzzy_aggregated_dom)
-```
-
 
 ```{r Visualize fuzzy weights distribution}
 # Plot the interval
@@ -914,4 +901,3 @@ f_w <- grid.arrange(f_soc_plt, f_phy_plt, ncol = 2)
 
 ggsave("figs/f_w.png", f_w, width = 10, height = 5)
 ```
-

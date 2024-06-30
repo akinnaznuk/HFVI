@@ -5,6 +5,10 @@ date: "2024-01-11"
 output: html_document
 ---
 
+This code runs the calculation of the HFVI applied to the Mahama Case Study. Data from the Mahama Camp are therefore used as inputs to create the individual indicators raster layer for subsequent spatial overlay, using the HFVI equation with the FAHP weights (obtained from running AHP.Rmd and FAHP.Rmd). Further spatial analysis (spatial autocorrelation and indicator correlation matrix) is performed followed by sensitivity and uncertainty analysis with the implementation of the FAHP-OAT Method (using the fuzzy ranges from the FAHP.Rmd file). Finally, visualization of the HFVI and uncertainty maps is performed.
+
+This code can be adjusted for other case studys, changing the input data for the individual indicator layers. 
+
 # Load Libraries
 
 ```{r setup, include=FALSE, warning = F}
@@ -57,6 +61,7 @@ check_pkg("stars")
 check_pkg("gridExtra")
 check_pkg("spatialEco")
 check_pkg("corrplot")
+check_pkg("ggpattern")
 
 # check_pkg("GD")
 # check_pkg("IDSA") # for fuzzy overlay
@@ -86,7 +91,7 @@ crs_utm <- 32736 # WGS 84 / UTM zone 36S EPSG:32736
 # Initialization of project paths
 ```{r init_paths, warning = FALSE, message = FALSE, fig.align = "center"}
 library(here)
-here::i_am("code.Rmd")
+here::i_am("HFVI.Rmd")
 knitr::opts_knit$set(root.dir=here("R/"))
 
 dataFolder   <- here::here("data")   # Data folder
@@ -102,8 +107,9 @@ figureFolder <- here::here("figs")   # Figure folder
 # Read Data
 
 - OSM data: https://download.geofabrik.de/africa/rwanda.html 
-- Mahama refugee camp boundary: hand drawn in the UNHCR GIS tool based on satellite image
+- Mahama refugee camp boundary: hand drawn in the UNHCR GIS tool based on satellite image > ADJUST FOR OTHER CAMPS, PREPOCESSING IS NECESSARY (e.g. using ArcGIS Pro)
 - Google buildings: https://sites.research.google/open-buildings/#dataformat 
+- Global land over data 30-m spatial resultion: https://glad.umd.edu/dataset/GLCLUC2020 
 
 ```{r Read data}
 # Read RWA OSM shapefiles and transfrom to crs to EPSG:32736
@@ -184,7 +190,7 @@ mahama_land_cover <- st_read("./data/land_use/land_cover.shp") %>%
 
 Global land over data 30-m spatial resultion: https://glad.umd.edu/dataset/GLCLUC2020 
 
-```{r GeoTIFF}
+```{r Land Cover GeoTIFF}
 # # Load landuse geotif 
 # 
 # GLCLUC2020 <- raster("./data/land_use/00N_030E.tif")
@@ -193,7 +199,6 @@ Global land over data 30-m spatial resultion: https://glad.umd.edu/dataset/GLCLU
 # target_crs <- crs("+proj=utm +zone=36 +south +datum=WGS84 +units=m +no_defs")
 # 
 # GLCLUC2020_projected <- projectRaster(GLCLUC2020, crs = target_crs)
-
 ```
 
 
@@ -212,8 +217,9 @@ Global land over data 30-m spatial resultion: https://glad.umd.edu/dataset/GLCLU
 mah_buildings <- st_read("./data/buildings/mahama_buildings/mahama_buildings.shp") %>%
   st_transform(crs = crs_utm)
 ```
+# Data Preprocessing
 
-```{r intersection}
+```{r Camp boundary intersection}
 # Clip to camp extent
 
 # OSM data 
@@ -242,7 +248,7 @@ mah_drainage <- st_intersection(mahama_drainage, mahama_boundary)
 mah_land_cover <- st_intersection(mahama_land_cover, mahama_boundary)
 ```
 
-```{r Plot data}
+```{r Plot the data}
 tmap_mode("plot")
 
 # Create a tmap object with multiple layers
@@ -346,8 +352,7 @@ mah_shelter <- mah_shelter %>%
   slice(-ids_to_drop)
 ```
 
-
-```{r}
+```{r Plot shelter and facility buildings}
 # Check
 tmap_mode("plot")
 
@@ -383,7 +388,7 @@ Determine grid size;
 2. Calculate the approximate size of one degree of latitude at that latitude using the formula.
 3. Convert the size from degrees to kilometers.
 
-```{r}
+```{r Calculate grid cell size for specific location}
 # # Latitude of the Mahama Refugee Camp (approximate)
 # # 30.8454002°E 2.3038914°S 
 # 
@@ -404,7 +409,7 @@ Determine grid size;
 # print(grid_cell_size_degrees)
 ```
 
-```{r}
+```{r Bounding box}
 # Define grid cell size
 grid_cell_size <- 30
 
@@ -440,10 +445,9 @@ rectangle_mah <- st_polygon(list(rectangle_coords)) %>%
 mapview(rectangle_mah) + mapview(mahama_boundary)
 
 ```
-
-
 # Creating a grid (regular resselation)
-```{r}
+
+```{r Create Grid}
 grid <- rectangle_mah %>%
   st_make_grid(cellsize = c(grid_cell_size, grid_cell_size, square = T)) %>%
   #st_intersection(mahama_boundary) %>%
@@ -468,6 +472,9 @@ print(paste("Grid cell size:", grid_cell_size, "meters"))
 mapview(grid)
 ```
 
+# ----------------------------
+
+## Calculation indicator layer
 
 # Population density 
 
@@ -478,7 +485,7 @@ The camp population in the Mahama refugee camp is at a number of 62486 individua
 1. Calculation of total area of all buildings 
 2. Calculate the overall population density, which is the total population divided by the total area of all buildings.
 3. Multiply the area of each building by the population density to estimate the number of people each building can house.
-```{r}
+```{r Average Camp Population}
 # Camp population (Sept. 2023)
 camp_pop_23 <- 62486
 
@@ -498,10 +505,9 @@ print("Average number of people per shelter")
 average_population
 
 ```
-
 The average occupancy of a shelter is almost 8 people per shelter. This number seems to be in line with the UNHCR data, which states that a shelter is designed to accommodate two families. 
 
-```{r}
+```{r Distribute population count}
 # Assign average occupancy number to each shelter to get the spatial distribution of the camp population 
 mah_shelter$estimated_people <- average_population
 
@@ -549,8 +555,7 @@ tm_shape(mahama_boundary) +
               frame = F)
 ```
 
-
-```{r}
+```{r Plot Population Count}
 # Plot the grid
 plot(grid$geometry)
 
@@ -635,7 +640,7 @@ tm_shape(grid) +
 
 # Vulnerable Groups
 
-```{r}
+```{r Existence of vulnerable groups}
 # Join polygons with grid cells
 vul_groups_grid <- grid %>%
   st_join(mah_vul_groups) 
@@ -673,7 +678,7 @@ tm_shape(grid) +
 
 Existence of fragile infrastructure + Sanitation Network + Drainage System
 
-```{r}
+```{r Existence of fragile CI}
 # Join polygons with grid cells
 ci_grid <- grid %>%
   st_join(mah_ci) 
@@ -744,8 +749,7 @@ tm_shape(mahama_boundary) +
               frame = F)
 ```
 
-Calculate normalized sanitary density 
-```{r}
+```{r Calculate normalized sanitary density }
 # Normalize sanitary count per grid cell
 
 sanitary_density_grid <- sanitary_grid
@@ -857,20 +861,6 @@ mapview(facility_buildings_ranked, zcol = "Physical_Vulnerability_Rank")
 
 First, calculate number of facilities per grid cell, meaning that when a building intersects a grid cell > add 1 to the count. 
 
-```{r}
-# Join polygons with grid cells
-# facility_grid <- grid %>%
-#   st_join(facility_buildings_ranked) 
-# 
-# facility_grid <- facility_grid %>%
-#   mutate(rank = ifelse(!is.na(Facility), 1, 0),
-#          Social_Vulnerability_Rank = ifelse(is.na(Facility) | Facility == 0, 0, Social_Vulnerability_Rank),
-#          Physical_Vulnerability_Rank = ifelse(is.na(Facility) | Facility == 0, 0, Physical_Vulnerability_Rank)) %>%
-#   mutate(Facility = if_else(is.na(Facility), "no facility", Facility))
-# 
-# mapview(facility_grid)
-```
-
 To calculate the facilities social vulnerability of each grid cell based on the normalized area of facility buildings and their respective weights, the following steps where taken:
 
 ```{r Facilities social vulnerability per grid cell}
@@ -980,7 +970,7 @@ facility_grid_grouped_phy <- rbind(facility_grid_grouped_phy_valid %>% filter(va
 
 ```
 
-```{r}
+```{r Summarize and Normalize grid counts}
 # SOC
 
 #----
@@ -1024,7 +1014,7 @@ facility_grid_grouped_phy <- facility_grid_summed_phy %>%
   mutate(normalized_score = (sum_weighted_values - min_sum) / (max_sum - min_sum))
 ```
 
-```{r}
+```{r Clead facility df}
 #SOC
 # Drop the geometry column from the sf object for later join
 facility_grid_grouped_soc_df <- st_drop_geometry(facility_grid_grouped_soc)
@@ -1165,7 +1155,7 @@ Data download from here: https://storage.googleapis.com/earthenginepartners-hans
 - agricultural areas: 3
 - open spaces: 2
 
-```{r}
+```{r Land Use grid data}
 mapview(mah_land_cover, zcol = "Type")
 
 mah_land_cover <- mah_land_cover %>%
@@ -1203,7 +1193,7 @@ tm_shape(grid) +
 ```
 
 # Shelter type
-```{r}
+```{r Plot Shelter Type}
 class(shelter_count_per_grid)
 
 # Create the map of Shelter Counts per Grid
@@ -1251,7 +1241,7 @@ Shelter Physical Vulnerability:
 4. Abandoned: Not inhabited, fragile structure
   --> vulnerability rank: 1
   
-```{r}
+```{r Assign Shelter Type Vulnerability Ranks}
 # Assign vulnerability ranks 
 mah_shelter_type <- mah_shelter_type %>%
   mutate(rank = case_when(
@@ -1278,9 +1268,7 @@ shelter_type_grid <- shelter_type_grid %>%
 #mapview(shelter_type_grid, zcol = "exist")
 ```
 
-
-Calculate normalized shelter density 
-```{r}
+```{r Calculate normalized shelter density }
 # Normalize shelter count per grid cell
 
 shelter_density_grid <- grid
@@ -1325,7 +1313,7 @@ mapview(shelter_density_grid, zcol = "normalized_density", layer.name = "Shelter
 3.	if shelter type “exist” == 1 then multiply the shelter density “normalized_density” by the rank “rank” and store the value in a new column “weight”, if “exist” == 0, then just take “normalized_density” and store it in weight
 4.	normalize the weight [0;1]
 
-```{r}
+```{r Plot Shelter Type Density}
 # Drop the geometry column from the sf object for later join
 shelter_density_grid_df <- st_drop_geometry(shelter_density_grid)
 
@@ -1406,10 +1394,7 @@ head(roads_ranked)
 
 ```{r Roads Vector data}
 tmap_mode("plot")
-
-
 ```
-
 
 ```{r Roads Grid Intersect}
 # Intersect road type polygon with grid 
@@ -1466,6 +1451,7 @@ tm_shape(road_type_grid) +
               frame = F)
 ```
 
+# Rasterization of grid layer
 
 ```{r Resample grid}
 # Create template stars object for rasterization
@@ -1485,7 +1471,7 @@ soc1_raster <- st_rasterize(population_grid %>% dplyr::select(normalized_density
                              template = grid_temp, align = T)
 ```
 
-```{r Rasterization}
+```{r Camp extent}
 # Starting with rasterizing the Mahama Camp boundary 
 
 # Clip the raster to the extent of the polygon
@@ -1494,7 +1480,7 @@ class(bound_rast)
 ```
 
 
-```{r Rasterization}
+```{r Rasterization of indicator layer}
 
 # Rasterize based on geometry and a column value.
 soc1_raster <- st_rasterize(population_grid %>% dplyr::select(normalized_density, geometry),
@@ -1584,8 +1570,7 @@ plot7 <- plot(phy3_raster, main="Facility PHY", axes=F, box=F)
 plot8 <- plot(phy4_raster, main="Road Type Grid", axes=F, box=F)
 ```
 
-
-```{r}
+```{r Visualize individual indicator raster layer}
 tmap_mode("plot")
 
 # Define tmaps without legends
@@ -1644,22 +1629,15 @@ tmap_indicators
 
 # Save tmap 
 tmap_save(tmap_indicators, "figs/indicators.png", height = 5)
+
+png(filename = "figs/indicators_t.png", width = 5, height = 5, units = 'in', res = 300, bg = "transparent")
+
+# Print the map to the device
+print(tmap_indicators)
+
+# Turn off the device
+dev.off()
 ```
-
-```{r}
-
-breaks <- seq(0, 1, by = 0.25)
-
-tm_soc <- tm_shape(soc1_raster) +
-  tm_raster(palette = "YlOrRd", title = "Flood Vulnerability Value",  style = "cont", breaks = breaks) +
-  tm_layout(legend.show = T, title = "SOC", title.position = c("left", "bottom"), title.size = 1, title.color = "black", 
-            frame = FALSE) +   tm_legend(outside = TRUE) + 
-  tm_shape(mahama_boundary) +
-  tm_borders()
-
-tm_soc
-```
-
 
 # Weighted raster overlay
 
@@ -1695,7 +1673,11 @@ weight_phy2 <- 0.2375048
 weight_phy3 <- 0.3321112
 weight_phy4 <- 0.1845735
 
+```
 
+## Calculating the HFVI 
+
+```{r HFVI calculation}
 # Weighted overlay
 
 # overlay rasters: FAHP weights
@@ -1719,7 +1701,6 @@ overlayed_phy <- normalize(overlayed_phy)
 f_overlayed_soc <- normalize(f_overlayed_soc)
 f_overlayed_phy <- normalize(f_overlayed_phy)
 ```
-
 
 ```{r Mapping weighted raster overlay}
 
@@ -1811,7 +1792,7 @@ tm_phy <- tm_shape(overlayed_phy) +
 tmap_arrange(tm_soc, tm_phy, nrow = 1)
 ```
 
-```{r save figures}
+```{r Save figures}
 # Arrange tmaps
 dim_map <- tmap_arrange(tm_f_soc, tm_f_phy, nrow = 1)
 
@@ -1819,8 +1800,7 @@ dim_map <- tmap_arrange(tm_f_soc, tm_f_phy, nrow = 1)
 tmap_save(dim_map, "figs/dim_map.png", width = 10, height = 5)
 ```
 
-
-### LOW PASS FILTER for smoothing: 
+### LOW PASS FILTER for smoothing 
 Using moving window calculations / focal filtering: The function is applied on the neighborhood using mean for a low-pass filter 
 The purpose of the mean, or low-pass, filter is to produce a smoothed image, where extreme values (possibly noise) are cancelled out.
 
@@ -1910,7 +1890,6 @@ scaled_value_phy_f
 
 ```
 
-
 ```{r Total overlay}
 # AHP
 tot_vul <- overlayed_soc * scaled_value_soc + overlayed_phy * scaled_value_phy
@@ -1924,7 +1903,7 @@ tot_f_vul <- f_overlayed_soc * scaled_value_soc_f + f_overlayed_phy * scaled_val
 tot_f_vul_raster <- as(tot_f_vul, "Raster")
 ```
 
-```{r}
+```{r Normalization}
 # Use normalize function defined above
 
 # Normalize the intermediate overlays
@@ -1932,7 +1911,9 @@ tot_vul_raster <- normalize(tot_vul_raster)
 tot_f_vul_raster <- normalize(tot_f_vul_raster)
 ```
 
-```{r Total vulnerability}
+# Mapping the HFVI
+
+```{r Total vulnerability visualization}
 
 # Define breakpoints for four classes
 breaks <- c(c(0, 0.01, 0.3333, 0.6666, 1))
@@ -1997,14 +1978,6 @@ tm_f_vul <- tm_shape(tot_f_vul_raster) +
 tm_f_vul
 ```
 
-```{r}
-check_pkg("gstat")
-
-summary(tot_f_vul_raster)
-
-# create possible realizations from the joint distribution of OC and TN
-# sample <- genSample(UMobject = mySpatialMUM, n = 3, samplemethod = "ugs", nmax = 20, asList = FALSE)
-```
 
 ```{r Smoothing filter}
 
@@ -2050,61 +2023,6 @@ tm_f_vul_smoothed
 tmap_arrange(tm_vul_smoothed, tm_f_vul_smoothed, nrow = 1)
 ```
 
-```{r Mapping: quantiles}
-# # Calculate quantile breaks
-# breaks <- quantile(values(tot_vul_raster), probs = seq(0, 1, by = 0.2))
-# 
-# tmap_mode("plot")
-# 
-# tm_vul <- tm_shape(tot_vul_raster) +
-#   tm_raster(palette = "viridis",
-#             title = "AHP", 
-#             breaks = breaks) +  # Set quantile breaks
-#   tm_layout(legend.show = TRUE,
-#             legend.position = c("left", "bottom"),
-#             frame = FALSE) +
-#   tm_shape(mahama_boundary) +
-#   tm_borders(col = "white", lwd = 0.5) +
-#   tm_layout(legend.show = TRUE,
-#             legend.title.color = "white",
-#             legend.position = c("left", "bottom"),
-#             legend.text.color = "white",
-#             title = "",
-#             title.position = c("left", "bottom"),
-#             frame = FALSE)
-# 
-# tm_vul
-# 
-# # Calculate quantile breaks
-# breaks_f <- quantile(values(tot_f_vul_raster), probs = seq(0, 1, by = 0.2))
-# 
-# # Round breaks to ensure uniqueness
-# breaks_f <- round(breaks_f, digits = 3)
-# 
-# tm_f_vul <- tm_shape(tot_f_vul_raster) +
-#   tm_raster(palette = "viridis",
-#             title = "FAHP", 
-#             breaks = breaks_f) +  # Set quantile breaks
-#   tm_layout(legend.show = TRUE,
-#             legend.position = c("left", "bottom"),
-#             frame = FALSE) +
-#   tm_shape(mahama_boundary) +
-#   tm_borders(col = "white", lwd = 0.5) +
-#   tm_layout(legend.show = TRUE,
-#             legend.title.color = "white",
-#             legend.position = c("left", "bottom"),
-#             legend.text.color = "white",
-#             title = "",
-#             title.position = c("left", "bottom"),
-#             frame = FALSE)
-# tm_f_vul
-
-# Arrange tmaps
-#tmap_arrange(tm_vul, tm_f_vul, nrow = 1)
-```
-
-# Spatial Analysis 
-
 ```{r Histrogram of index values}
 hist(tot_vul_raster)
 hist(tot_f_vul_raster)
@@ -2132,8 +2050,7 @@ subtitle <- "FVI = weigthed SOC + PHY Vulnerability Indicators"
 
 intersect_grid <- st_intersection(grid, mahama_boundary)
 ```
-
-# Visualization 
+# Final HFVI Visualization 
 
 ```{r HFVI Map}
 # Set tmap mode to plotting
@@ -2238,13 +2155,15 @@ tmap_save(tm_f_vul_smoothed, "figs/HFVI_smoothed.png", width = 7, height = 5)
 ```{r Export raster}
 writeRaster(tot_f_vul_raster, filename = "HFVI_f_raster.tif", overwrite=TRUE)
 writeRaster(tot_f_vul_raster_smoothed, filename = "HFVI_f_raster_smoothed.tif", overwrite=TRUE)
+writeRaster(f_overlayed_soc_smoothed, filename = "HFVI_soc.tif", overwrite=TRUE)
+writeRaster(f_overlayed_phy_smoothed, filename = "HFVI_phy.tif", overwrite=TRUE)
 ```
 
 
-# Spatial Autocorrelation
+# Spatial Analysis
 Goals of spatial autocorrelation: Measuring the strength of spatial relationship and testing assumptions of independence and randomness
 
-```{r Spatial Correlation}
+```{r Spatial Autocorrelation}
 library(spdep)
 
 # tot_vul is a SpatialPixelsDataFrame
@@ -2287,7 +2206,7 @@ Overall, the high Moran's I value and low p-value suggest significant positive s
 --> see ETH slides: https://ethz.ch/content/dam/ethz/special-interest/baug/irl/plus-dam/documents/lehrveranstaltungen/msc/MCDA/Lecture4_criteria_maps.pdf
 or https://geodacenter.github.io/workbook/5a_global_auto/lab5a.html#morans-i
 
-```{r}
+```{r Moran's I scatter plot}
 # Plot Moran's I scatter plot
 
 mp <-moran.plot(tot_vul_values, w, zero.policy=attr(w, "zero.policy"), labels=NULL, xlab=NULL, ylab=NULL, quiet=NULL, plot=T)
@@ -2319,7 +2238,7 @@ stats_corr <- layerStats(stack_corr, 'pearson', na.rm=T)
 corr_matrix <- stats_corr$'pearson correlation coefficient'
 ```
 
-```{r}
+```{r Correlation matrix}
 # Calculate significance of correlation: p-value 
 
 # mat : is a matrix of data
@@ -2580,7 +2499,6 @@ oat(rasters = rasters_phy1,
 #Example: result_-20 =  Results at -20% change in weights
 ```
 
-
 ```{r OAT SOC2 / PHY2}
 # Now change dominant factor -> amplifying SOC2 / PHY2 as main
 
@@ -2643,7 +2561,6 @@ oat(rasters = rasters_phy2,
     step = step,
     plot = TRUE,
     output_dir = "./OAT")
-
 ```
 
 ```{r OAT SOC3 / PHY3}
@@ -3206,8 +3123,7 @@ Decision Support: The uncertainty map can aid decision-makers by highlighting ar
 
 Overall, the final uncertainty map derived from the OAT sensitivity analysis provides valuable information about the robustness and reliability of your MCA model, allowing for more informed decision-making in spatial planning and resource management contexts.
 
-
-```{r Final Map}
+```{r Map overlay of HFVI and uncertainties}
 
 # Load your raster data
 tot_f_vul_raster_smoothed
@@ -3216,31 +3132,6 @@ smoothed_overlay_unc
 # Convert rasters to data frames
 hfvi_df <- as.data.frame(tot_f_vul_raster_smoothed, xy = TRUE)
 uncertainty_df <- as.data.frame(smoothed_overlay_unc, xy = TRUE)
-
-# Rename columns for clarity
-colnames(hfvi_df) <- c("x", "y", "HFVI")
-colnames(uncertainty_df) <- c("x", "y", "Uncertainty")
-
-# Merge data frames by coordinates
-combined_df <- left_join(hfvi_df, uncertainty_df, by = c("x", "y"))
-
-# Normalize uncertainty values to range [0, 1] for saturation
-combined_df <- combined_df %>%
-  mutate(Uncertainty_normalized = scales::rescale(Uncertainty, to = c(0, 1)))
-
-# Create the plot
-ggplot(combined_df) +
-  geom_raster(aes(x = x, y = y, fill = HFVI, alpha = Uncertainty_normalized)) +
-  scale_fill_gradientn(name = "HFVI", colors = brewer.pal(9, "YlOrRd")) +
-  scale_alpha_continuous(name = "Uncertainty", range = c(0.1, 1)) + # Ensuring a suitable range for transparency
-  coord_equal() +
-  theme_void() +  # Remove the gray background and other default plot elements
-  labs(title = "Overlay of HFVI and Uncertainty",
-       subtitle = "Hue represents HFVI, Saturation represents Uncertainty")
-
-```
-
-```{r}
 
 # Rename columns for clarity
 colnames(hfvi_df) <- c("x", "y", "HFVI")
@@ -3279,86 +3170,3 @@ ggplot(combined_df) +
        subtitle = "Hue represents HFVI, Saturation represents Uncertainty")
 
 ```
-
-```{r}
-
-# Load your raster data
-# Assuming tot_f_vul_raster_smoothed and smoothed_overlay_unc are already loaded in your environment
-
-# Convert rasters to data frames
-hfvi_df <- as.data.frame(tot_f_vul_raster_smoothed, xy = TRUE)
-uncertainty_df <- as.data.frame(smoothed_overlay_unc, xy = TRUE)
-
-# Rename columns for clarity
-colnames(hfvi_df) <- c("x", "y", "HFVI")
-colnames(uncertainty_df) <- c("x", "y", "Uncertainty")
-
-# Convert data frames to sf objects
-hfvi_sf <- st_as_sf(hfvi_df, coords = c("x", "y"), crs = st_crs(mahama_boundary))
-uncertainty_sf <- st_as_sf(uncertainty_df, coords = c("x", "y"), crs = st_crs(mahama_boundary))
-
-# Clip the sf objects to the mahama_boundary
-hfvi_clipped <- st_intersection(hfvi_sf, mahama_boundary)
-uncertainty_clipped <- st_intersection(uncertainty_sf, mahama_boundary)
-
-# Convert clipped sf objects back to raster
-hfvi_raster_clipped <- rasterFromXYZ(st_coordinates(hfvi_clipped) %>%
-                                     as.data.frame() %>%
-                                     mutate(HFVI = hfvi_clipped$HFVI))
-
-uncertainty_raster_clipped <- rasterFromXYZ(st_coordinates(uncertainty_clipped) %>%
-                                            as.data.frame() %>%
-                                            mutate(Uncertainty = uncertainty_clipped$Uncertainty))
-
-# Create the tmap
-tm_unc_smoothed <- tm_shape(osm_map) + 
-  tm_rgb(alpha = 0.3) +  # Adjust transparency of the OSM map
-  tm_layout(legend.position = c("left", "bottom"), frame = FALSE) +  # Adjust legend position and remove frame
-  tm_shape(hfvi_raster_clipped) +
-  tm_raster(palette = "YlOrRd", 
-            style = "cont", 
-            title = "HFVI Value", 
-            alpha = 0.6, 
-            legend.hist = TRUE) + 
-  tm_shape(uncertainty_raster_clipped) +
-  tm_raster(palette = "Blues", 
-            style = "cont", 
-            title = "Uncertainty Value", 
-            alpha = 0.3, 
-            legend.hist = TRUE) + 
-  tm_shape(mahama_boundary) +
-  tm_borders() +
-  tm_scale_bar(position = c("left", "bottom")) +  # Add scale bar
-  tm_compass(type = "arrow", position = c(0, .2)) +  # Add compass
-  
-  tm_layout(title = "HFVI Weight Uncertainty Map - Smoothed",  # Add title
-            title.position = c("left", "top"),  # Adjust title position
-            title.size = 1.5,
-            title.fontface = "bold",
-            legend.hist.size = 1,
-            legend.hist.width = 0.6,  # Adjust title size
-            legend.show = TRUE,
-            legend.title.color = "black",
-            legend.title.size = 0.9,
-            legend.text.color = "black",
-            legend.position = c("left", "bottom"))  # Adjust legend colors and position
-
-# Print the map
-tm_unc_smoothed
-
-```
-
-
-### TO DO:
-
-- Final Map Presentation
-- Uncertainties (attribute and locational)
-- improve uncertainty score: e.g. shelter type when information is not available
-
-
-Verteilung der Daten:
--> Quartiles anschauen für die einfärbung: jenks, quartiles und nicht equal intervals 
-
-Histogramm von Werten zeigen 
-
-smooting filter anwenden 

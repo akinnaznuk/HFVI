@@ -5,6 +5,7 @@ date: "2024-02-06"
 output: html_document
 ---
 
+This code runs the calculations for the determination of the AHP weights based on the responses from the experts questionnaire. It creates individual PCMs and calculates individual and aggregated priority weights. Further, consistencies in the data are identified, quantified and transformed receive adjusted priority weights of reduced inconsistencies. 
 
 # Load Libraries
 
@@ -49,7 +50,7 @@ check_pkg("corrplot") # Correlation matrix
 ```
 
 ```{r set working directory}
-setwd("~/Documents/Uni/Master/Masterarbeit/R")
+#setwd("~/Documents/Uni/Master/Masterarbeit/R")
 ```
 
 # Initialization of project paths
@@ -68,10 +69,8 @@ The following workflow follows the description of the following website, introdu
 ```{r Cite ahpsurvey package}
 citation("ahpsurvey")
 ```
-
-
 ```{r Read data}
-# AHP results: Data set contain all AHP questionnaire answers (rows) for each attribute 
+# AHP results: Data set containing all AHP questionnaire answers (rows) for each attribute 
 data_SOC <- read_excel("~/Library/CloudStorage/OneDrive-UniversitätZürichUZH/Uni/Masterarbeit/NatrualHazards_UNHCR/Academic/Documents/05_IndexDevelopment/QuestionnaireAHP/Results/AHP_results.xlsx", 
                        sheet = "SOC", 
                        col_types = c("skip", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric"))
@@ -437,7 +436,7 @@ ind_w_soc <- data_SOC %>%
 ind_w_soc
 ```
 
-```{r median weights}
+```{r Median weights}
 #SOC
 soc <- data_SOC %>%
   ahp.mat(atts = atts_soc, negconvert = TRUE) %>% 
@@ -520,7 +519,7 @@ ind_w_phy <- data_PHY %>%
 ind_w_phy
 ```
 
-```{r save plots}
+```{r Save plots}
 # Save plots to the "figs" folder
 ggsave("figs/ind_w_soc.png", ind_w_soc, width = 12, height = 4)
 ggsave("figs/ind_w_phy.png", ind_w_phy, width = 12, height = 4)
@@ -530,7 +529,6 @@ ind_w <- grid.arrange(ind_w_soc, ind_w_phy, ncol = 2)
 
 ggsave("figs/ind_w.png", ind_w, width = 10, height = 5)
 ```
-
 
 ```{r Visualization vulnerability domain criteria weights}
 cr_dom <- data_DOM %>%
@@ -573,7 +571,7 @@ data_DOM %>%
   theme_minimal()
 ```
 
-```{r}
+```{r Visualization weights and CR value}
 # Create a threshold for CR
 thres <- 0.1
 
@@ -793,7 +791,7 @@ pcm_dom %>%
 
 The plot helps identify which pairs of criteria or alternatives have the most frequent errors in judgment during the AHP analysis. Pairs with higher error frequencies may indicate areas of inconsistency or uncertainty in decision-making, which could affect the reliability of the AHP results. Analyzing the patterns of errors can provide insights into which comparisons are most challenging or ambiguous, allowing for adjustments or improvements in the decision-making process.
 
-```{r save plots}
+```{r Save plots}
 # Save plots to the "figs" folder
 ggsave("figs/top_error_soc.png", top_error_soc, width = 12, height = 4)
 ggsave("figs/top_error_phy.png", top_error_phy, width = 12, height = 4)
@@ -930,7 +928,7 @@ data.frame(table( crmat_dom[,1] <= 0.1),
 ```
 
 
-```{r}
+```{r Visualize iterations}
 # soc 
 harker_soc <- crmat_soc %>% 
   as.data.frame() %>%
@@ -981,7 +979,7 @@ harker_dom <- crmat_dom %>%
 harker_dom
 ```
 
-```{r save plots}
+```{r Save plots}
 # Save plots to the "figs" folder
 ggsave("figs/harker_soc.png", harker_soc, width = 12, height = 4)
 ggsave("figs/harker_phy.png", harker_phy, width = 12, height = 4)
@@ -1238,7 +1236,6 @@ data_PHY_filtered <- data_PHY[-c(6, 11), ]
 data_DOM_filtered <- data_DOM[-c(6, 11), ]
 ```
 
-
 ```{r Corrected aggregated criteria weights}
 # SOC
 
@@ -1322,30 +1319,7 @@ print(corr_agg_mat_phy)
 print(corr_agg_mat_dom)
 ```
 
-Filter out still inconsistent criteria weights!! then aggregation of final weights and fuzzification
-
-# -----------------------------------------
-# Canned routine for AHP analysis 
-
-```{r Canned routine }
-canned <- ahp(df = as.data.frame(data_SOC),
-              atts = atts_soc,
-              negconvert = TRUE, 
-              reciprocal = TRUE,
-              method = 'eigen',
-              aggmethod = "arithmetic",
-              agg = TRUE)
-
-canned$indpref %>% rownames_to_column('ID') %>% kable() %>% kable_styling()
-
-# aggregated preferences 
-canned$aggpref %>% t() %>% kable() %>% kable_styling()
-```
-The table summarizes the individual priorities calculated using the arithmetic mean method, the consistency ratio of each individual, and which three pairwise comparisons are the most inconsistent.
-
-
-### Sensitivity analysis
-
+Still inconsistent results are filtered out for aggregation of final weights and subsequent fuzzification
 
 # Fuzzy AHP
 see separate script FAHP.Rmd

@@ -155,9 +155,9 @@ zoo : 1.8-12
 ## Computation Steps
 Detailed steps for each analysis are documented in the R Markdown files.
 Expected Execution Times:
-- AHP Analysis: ~5 minutes.
-- FAHP Analysis: ~10 minutes.
-- HFVI Calculation: ~15 minutes (using the provided synthetic data)
+- AHP Analysis: ~2 minutes.
+- FAHP Analysis: ~1 minutes.
+- HFVI Calculation: ~5 minutes (using the provided synthetic data)
 
 
 ## Credits

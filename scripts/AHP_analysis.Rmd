@@ -1,0 +1,1368 @@
+---
+title: "AHP analysis"
+author: ""
+date: "2024-02-06"
+output: html_document
+---
+
+This code runs the calculations for the determination of the AHP weights based on the responses from the experts questionnaire. It creates individual PCMs and calculates individual and aggregated priority weights. Further, consistencies in the data are identified, quantified and transformed receive adjusted priority weights of reduced inconsistencies. 
+
+# Load Libraries
+
+```{r setup, include=FALSE, warning = F}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
+
+# Install/load packages
+## Default repository
+local({r <- getOption("repos")
+       r["CRAN"] <- "http://cran.r-project.org" 
+       options(repos = r)
+})
+
+check_pkg <- function(x)
+  {
+    if (!require(x, character.only = TRUE))
+    {
+      install.packages(x, dep = TRUE)
+        if(!require(x, character.only = TRUE)) stop("Package not found")
+    }
+}
+
+check_pkg("sf")
+check_pkg("httr")
+check_pkg("rgdal")
+check_pkg("readxl")
+check_pkg("ggplot2")
+check_pkg("plotly")
+check_pkg("tidyverse")
+check_pkg("leaflet")
+check_pkg("dplyr")
+check_pkg("XML")
+check_pkg("mapview")
+check_pkg("lubridate")
+check_pkg("knitr")
+check_pkg("xtable")
+check_pkg("kableExtra")
+check_pkg("gridExtra")
+check_pkg("ahpsurvey") # AHP survey: https://cran.r-project.org/web/packages/ahpsurvey/vignettes/my-vignette.html 
+check_pkg("corrplot") # Correlation matrix
+```
+
+# Initialization of project paths
+```{r init_paths, warning = FALSE, message = FALSE, fig.align = "center"}
+library(here)
+here::i_am("scripts/AHP_analysis.Rmd")
+knitr::opts_knit$set(root.dir = here::here())
+
+dataFolder   <- here::here("data")   # Data folder
+RFolder      <- here::here()         # RScript folder (i.e. where project file resides)
+resultsFolder <- here::here("outputs/results")   # Figure folder
+```
+
+The following workflow follows the description of the following website, introducing the "ahpsurvey" package: https://cran.r-project.org/web/packages/ahpsurvey/vignettes/my-vignette.html 
+
+```{r Cite ahpsurvey package}
+citation("ahpsurvey")
+```
+
+```{r Read data}
+# AHP results: Data set containing all AHP questionnaire answers (rows) for each attribute
+# Read CSV files from the 'data' folder
+data_SOC <- read.csv(file.path(dataFolder, "ahp/ahp_soc.csv"), sep = ";", header = TRUE) %>%
+  dplyr::select(-1) %>%  # remove the first column
+  na.omit()
+
+data_PHY <- read.csv(file.path(dataFolder, "ahp/ahp_phy.csv"), sep = ";", header = TRUE) %>%
+  dplyr::select(-1) %>%  # Remove the first column
+  na.omit() 
+
+data_DOM <- read.csv(file.path(dataFolder, "ahp/ahp_dom.csv"), sep = ";", header = TRUE) %>%
+  dplyr::select(-1) %>%  # Remove the first column
+  na.omit()
+```
+
+```{r Assign attributes}
+# Read SOC data
+atts_soc <- c("SOC_1", "SOC_2", "SOC_3", "SOC_4") # Order needs to be correct
+atts_phy <- c("PHY_1", "PHY_2", "PHY_3", "PHY_4")
+atts_dom <- c("F_EXP", "S_SOC", "S_PHY")
+
+atts_soc
+
+atts_name_soc <- c("Population density", "Vulnerable Groups", "Facilities of social importance", "Land use")
+atts_name_phy <- c("Shelter type", "Critical Infrastructure", "Facilities physical vulnerability", "Roads / Transport")
+atts_name_dom <- c("Flood Exposure", "Social Susceptibility", "Physical Susceptibility")
+```
+
+```{r SOC PCM}
+# Use ahp.mat function > creates a list of pairwise comparison matrices for all decision-makers
+
+# social indicators
+data_SOC %>%
+  ahp.mat(atts = atts_soc, negconvert = TRUE) %>%
+  head(4)
+```
+
+
+```{r PHY PCM}
+# Physical indicators
+data_PHY %>%
+  ahp.mat(atts = atts_phy, negconvert = TRUE) %>% 
+  head(3)
+```
+
+```{r DOM PCM}
+# Physical indicators
+data_DOM %>%
+  ahp.mat(atts = atts_dom, negconvert = TRUE) %>% 
+  head(3)
+```
+
+### Individual preferences weights
+
+The ahp.indpref function computes the individual priorities of the decision-makers, and returns a data.frame containing the preference weights of the decision-makers. The three arguments are as follows:
+
+- ahpmat: The list of matrices created by ahp.mat.
+- atts: a list of attributes in the correct order.
+- method: It normalizes the matrices so that all of the columns add up to 1, and then computes the averages of the row as the preference weights of each attribute. Four modes of finding the averages are available:
+    arithmetic: the arithmetic mean
+    geometric: the geometric mean
+    rootmean: the square root of the sum of the squared value
+    eigen: the individual preference weights are computed using the Dominant Eigenvalues method described in Saaty (2003)
+
+```{r Individual priority weights}
+# Individual preferences weights: social
+pcm_soc <- data_SOC %>% 
+  ahp.mat(atts_soc, negconvert = T)
+
+w_eigen_soc <- ahp.indpref(pcm_soc , atts_soc, method = "eigen")
+w_geom_soc <- ahp.indpref(pcm_soc , atts_soc, method = "arithmetic")
+error_soc <- data.frame(id = 1:length(pcm_soc), maxdiff = apply(abs(w_eigen_soc - w_geom_soc), 1, max))
+
+error_soc %>%
+  ggplot(aes(x = id, y = maxdiff)) +
+  geom_point() +
+  geom_hline(yintercept = 0.05, linetype = "dashed", color = "red") +
+  geom_hline(yintercept = 0, color = "gray50") +
+  scale_x_continuous("Respondent ID") +
+  scale_y_continuous("Maximum difference") +
+  theme_minimal() # Shows maximum difference between eigenvalue and mean aggregation
+
+# Individual preferences weights: physical
+pcm_phy <- data_PHY %>% 
+  ahp.mat(atts_phy, negconvert = T)
+
+w_eigen_phy <- ahp.indpref(pcm_phy , atts_phy, method = "eigen")
+w_geom_phy <- ahp.indpref(pcm_phy , atts_phy, method = "arithmetic")
+error_phy <- data.frame(id = 1:length(pcm_phy), maxdiff = apply(abs(w_eigen_phy - w_geom_phy), 1, max))
+
+error_phy %>%
+  ggplot(aes(x = id, y = maxdiff)) +
+  geom_point() +
+  geom_hline(yintercept = 0.05, linetype = "dashed", color = "red") +
+  geom_hline(yintercept = 0, color = "gray50") +
+  scale_x_continuous("Respondent ID") +
+  scale_y_continuous("Maximum difference") +
+  theme_minimal()
+
+# Individual preferences weights: vulnerability domain 
+pcm_dom <- data_DOM %>% 
+  ahp.mat(atts_dom, negconvert = T)
+
+w_eigen_dom <- ahp.indpref(pcm_dom , atts_dom, method = "eigen")
+w_geom_dom <- ahp.indpref(pcm_dom , atts_dom, method = "arithmetic")
+error_dom <- data.frame(id = 1:length(pcm_dom), maxdiff = apply(abs(w_eigen_dom - w_geom_dom), 1, max))
+
+error_dom %>%
+  ggplot(aes(x = id, y = maxdiff)) +
+  geom_point() +
+  geom_hline(yintercept = 0.05, linetype = "dashed", color = "red") +
+  geom_hline(yintercept = 0, color = "gray50") +
+  scale_x_continuous("Respondent ID") +
+  scale_y_continuous("Maximum difference") +
+  theme_minimal()
+
+# Shows maximum difference between eigenvalue and mean aggregation
+```
+The plot demonstrates the difference of using arithmetic aggregation and dominant eigenvalue methods. We can see that some respondents (1,2 and 6) have at least one attribute with a difference larger than 0.05 due to presence of inconsistent and heterogeneous responses.
+
+
+### Aggregated prefecence weights 
+The ahp.aggpref function computes the aggregated priorities of all decision-makers using the sThe pecified methods.
+
+method: Same as ahp.indpref. It normalizes the matrices so that all of the columns add up to 1, and then computes the averages of the row as the preference weights of each attribute. Four modes of finding the averages are available:
+- arithmetic: the arithmetic mean
+- geometric: the geometric mean
+- rootmean: the square root of the sum of the squared value
+- eigen: the individual preference weights are computed using the Dominant Eigenvalues method described in Saaty (2003)
+
+aggmethod: how to aggregate the individual priorities.
+- arithmetic, geometric and rootmean (same principle as method)
+- tmean trimmed mea
+- tgmean trimmed geometric mean
+- sd returns the standard deviation from the arithmetic mean.
+
+```{r Aggregated preference weights / priority vectors}
+# Aggregated social preference weights
+w_soc_agg_mean <- ahp.aggpref(pcm_soc, atts_soc, method = "eigen") 
+w_soc_agg_mean <- as.data.frame(w_soc_agg_mean) %>% add_column(., name = atts_name_soc, .after = 0)
+colnames(w_soc_agg_mean) <- c("Indicator", "Aggregated preference weight")
+
+# Check if sum is equal to 1 
+total <- sum(w_soc_agg_mean$`Aggregated preference weight`)
+total # the sum of the aggregated weights does nor equal 1 -> hint for inconsistency
+
+kable(w_soc_agg_mean, caption = "Aggregated preference weights: Social vulnerability indicators") %>% kable_styling()
+
+# Aggregated phy preference weights
+w_phy_agg_mean <- ahp.aggpref(pcm_phy, atts_phy, method = "eigen") 
+w_phy_agg_mean <- as.data.frame(w_phy_agg_mean) %>% add_column(., name = atts_name_phy, .after = 0)
+colnames(w_phy_agg_mean) <- c("Indicator", "Aggregated preference weight")
+
+kable(w_phy_agg_mean, caption = "Aggregated preference weights: Physical vulnerability indicators") %>% kable_styling()
+
+# Aggregated dom preference weights
+w_dom_agg_mean <- ahp.aggpref(pcm_dom, atts_dom, method = "eigen") 
+w_dom_agg_mean <- as.data.frame(w_dom_agg_mean) %>% add_column(., name = atts_name_dom, .after = 0)
+colnames(w_dom_agg_mean) <- c("Indicator", "Aggregated preference weight")
+
+kable(w_dom_agg_mean, caption = "Aggregated preference weights: Vulnerability classes") %>% kable_styling()
+```
+
+Two steps were simultaneously conducted in the above command:
+- Compute the individual priorities of each decision-maker (using method: eigenvalue)
+- Aggregate the priorities (using aggmethod; arithmetic)
+
+By default, the two steps rely on the same aggregation method as specified in method (unless when method = "eigen", where aggmethod defaults to arithmetic).
+
+It is also possible to quantify the heterogeneity amongst decision-makers’ priorities, information possibly lost by group aggregation. This is specified using aggmethod = "sd":
+
+```{r Heterogenity in priorities}
+
+# SOC
+mean_soc <- data_SOC %>%
+  ahp.mat(atts = atts_soc, negconvert = TRUE) %>% 
+  ahp.aggpref(atts_soc, method = "eigen")
+
+sd_soc <- data_SOC %>%
+  ahp.mat(atts = atts_soc, negconvert = TRUE) %>% 
+  ahp.aggpref(atts_soc, method = "eigen", aggmethod = "sd")
+
+trans_SOC <- t(data.frame(mean_soc, sd_soc))
+kable(trans_SOC, caption = "SD from aggregated priority weights: Social") %>% kable_styling()
+
+# PHY
+mean_phy <- data_PHY %>%
+  ahp.mat(atts = atts_phy, negconvert = TRUE) %>% 
+  ahp.aggpref(atts_phy, method = "eigen")
+
+sd_phy <- data_PHY %>%
+  ahp.mat(atts = atts_phy, negconvert = TRUE) %>% 
+  ahp.aggpref(atts_phy, method = "eigen", aggmethod = "sd")
+
+trans_PHY <- t(data.frame(mean_phy, sd_phy))
+kable(trans_PHY, caption = "SD from aggregated priority weights: Physical") %>% kable_styling()
+
+# DOM 
+mean_dom <- data_DOM %>%
+  ahp.mat(atts = atts_dom, negconvert = TRUE) %>% 
+  ahp.aggpref(atts_dom, method = "eigen")
+
+sd_dom <- data_DOM %>%
+  ahp.mat(atts = atts_dom, negconvert = TRUE) %>% 
+  ahp.aggpref(atts_dom, method = "eigen", aggmethod = "sd")
+
+trans_DOM <- t(data.frame(mean_dom, sd_dom))
+kable(trans_DOM, caption = "SD from aggregated priority weights: Domain") %>% kable_styling()
+
+```
+
+The ahp.aggjudge function aggregates the individual judgements of all decision-makers to generate a row-standardized pairwise comparison matrix of all decision-makers. This allows one to compare priorities directly based on the aggregated pairwise judgements of all decision-makers. It takes the argument aggmethod with the exact same options as ahp.aggpref.
+
+```{r Aggregated individual judgments}
+agg_mat_soc <- data_SOC %>%
+  ahp.mat(atts = atts_soc, negconvert = TRUE) %>% 
+  ahp.aggjudge(atts_soc, aggmethod = "arithmetic")
+
+agg_mat_phy <- data_PHY %>%
+  ahp.mat(atts = atts_phy, negconvert = TRUE) %>% 
+  ahp.aggjudge(atts_phy, aggmethod = "arithmetic")
+
+agg_mat_dom <-data_DOM %>%
+  ahp.mat(atts = atts_dom, negconvert = TRUE) %>% 
+  ahp.aggjudge(atts_dom, aggmethod = "arithmetic")
+
+print(agg_mat_soc)
+print(agg_mat_phy)
+print(agg_mat_dom)
+```
+## Measuring and visualising consistency
+
+Calculation of consistency ratio (CR): see formula Saaty 
+
+```{r Sample matrix}
+
+# Original weights for testing
+test <- c(1, -5, -5, -5, -7, -3)
+test
+
+sample_mat <- ahp.mat(t(test), atts_soc, negconvert = TRUE)
+sample_mat
+
+(cr_std <- ahp.cr(sample_mat, atts_soc))
+```
+
+Generation of random index RI for number of dimensions and random seeds: The ahp.ri function calculates the mean consistency indices of a specific numbers of random number pairwise comparison matrices. ahp.ri creates nsims number of pairwise comparison matrices with number of dimensions=dim and results it's average --> generated random index, which is numeric.
+
+```{r RI value}
+#ri_4 <- ahp.ri(nsims = 500000, dim = 4, seed = 42)
+#print(ri_4)
+
+#ri_3 <- ahp.ri(nsims = 500000, dim = 3, seed = 42)
+#print(ri_3)
+
+# We can also extract the RI from Saaty's reference table, where 
+ri_4 <- 0.90
+ri_3 <- 0.58
+```
+
+
+```{r Consistency Ratio}
+# --- social 
+
+## Use this RI to calculate the consistency ratio CR
+cr_soc <- ahp.cr(pcm_soc, atts_soc, ri_4)
+cr_soc <- as.data.frame(cr_soc)
+
+# Add ID column and bind to df
+id <- 1:nrow(data_SOC)
+cr_soc <- cbind(id, cr_soc)
+
+# Add column to show consistency
+cr_soc$con <- ifelse(cr_soc$cr_soc <= 0.1, "True", "False")
+
+# Adjust column names
+colnames(cr_soc) <- c("Experts ID", "CR Value", "Consistent")
+
+# Create table
+kable(cr_soc, caption = "CR values for participants PCM results on social criteria weights", align = c("c", "c", "c")) %>% kable_styling()
+
+# --- physical
+
+## Use this RI to calculate the consistency ratio CR
+cr_phy <- ahp.cr(pcm_phy, atts_phy, ri_4)
+cr_phy <- as.data.frame(cr_phy)
+
+# Add ID column
+id <- 1:nrow(data_PHY)
+cr_phy <- cbind(id, cr_phy)
+
+# Add column to show consistency
+cr_phy$con <- ifelse(cr_phy$cr_phy <= 0.1, "True", "False")
+
+# Adjust column names
+colnames(cr_phy) <- c("Experts ID", "CR Value", "Consistent")
+
+# Create table
+kable(cr_phy, caption = "CR values for participants PCM results on physical criteria weights", align = c("c", "c", "c")) %>% kable_styling()
+
+# --- domain
+## Use this RI to calculate the consistency ratio CR
+cr_dom <- ahp.cr(pcm_dom, atts_dom, ri_4)
+cr_dom <- as.data.frame(cr_dom)
+
+# Add ID column
+id <- 1:nrow(data_DOM)
+cr_dom <- cbind(id, cr_dom)
+
+# Add column to show consistency
+cr_dom$con <- ifelse(cr_dom$cr_dom <= 0.1, "True", "False")
+
+# Adjust column names
+colnames(cr_dom) <- c("Experts ID", "CR Value", "Consistent")
+
+# Create table
+kable(cr_dom, caption = "CR values for participants PCM results on vulnerability domain weights", align = c("c", "c", "c")) %>% kable_styling()
+```
+
+
+### Visualizing individual priorities and CR
+```{r Visualization social criteria weights}
+
+cr_soc <- data_SOC %>%
+  ahp.mat(atts_soc, negconvert = T) %>% 
+  ahp.cr(atts_soc)
+table(cr_soc <= 0.1)
+
+thres <- 0.1
+dict <- c("SOC_1" = "SOC1", #Population Density"
+          "SOC_2" = "SOC2", # "Vulnerable Groups"
+          "SOC_3" = "SOC3", #"Facilities SOC. Vul."
+          "SOC_4" = "SOC4") # "Land use"
+
+cr.df <- data_SOC %>%
+  ahp.mat(atts_soc, negconvert = TRUE) %>% 
+  ahp.cr(atts_soc) %>% 
+  data.frame() %>%
+  mutate(rowid = 1:length(cr_soc), cr.dum = as.factor(ifelse(cr_soc <= thres, 1, 0))) 
+
+ind_w_soc <- data_SOC %>%
+  ahp.mat(atts = atts_soc, negconvert = TRUE) %>% 
+  ahp.indpref(atts_soc, method = "eigen") %>% 
+  mutate(rowid = 1:nrow(w_eigen_soc)) %>%
+  left_join(cr.df, by = 'rowid') %>%
+  gather(SOC_1, SOC_2, SOC_3, SOC_4, key = "var", value = "pref") %>%
+  ggplot(aes(x = var, y = pref)) + 
+  geom_violin(alpha = 0.6, width = 0.8, color = "transparent", fill = "gray") +
+  geom_boxplot(alpha = 0, width = 0.3, color = "#808080") +
+  geom_jitter(aes(color = cr.dum, label = rowid), alpha = 0.6, height = 0, width = 0.1) +
+  scale_x_discrete("", label = dict) +
+  scale_y_continuous("Weight (dominant eigenvalue)", 
+                     labels = scales::percent, 
+                     breaks = c(seq(0,0.9,0.1))) +
+  guides(color=guide_legend(title=NULL))+
+  scale_color_discrete(breaks = c(0,1), 
+                       labels = c(paste("CR >", thres), 
+                                  paste("CR <", thres))) +
+  labs(NULL, caption = paste("n =", nrow(data_SOC), ",", "Mean CR =",
+                           round(mean(cr_soc),3)))+
+  ggtitle("Distribution of individual priorities", subtitle = "Social vulnerability indicators") +
+  theme_minimal() +
+  theme(legend.position = "none")  # Hide the legend
+
+ind_w_soc
+```
+
+```{r Median weights}
+#SOC
+soc <- data_SOC %>%
+  ahp.mat(atts = atts_soc, negconvert = TRUE) %>% 
+  ahp.indpref(atts_soc, method = "eigen") %>% 
+  mutate(rowid = 1:nrow(w_eigen_soc)) %>%
+  left_join(cr.df, by = 'rowid') %>%
+  gather(SOC_1, SOC_2, SOC_3, SOC_4, key = "var", value = "pref") 
+
+# Calculate the median of 'pref' grouped by 'var'
+median_values_soc <- soc %>%
+  group_by(var) %>%
+  summarise(median_pref = median(pref))
+
+# Print the result
+print(median_values_soc)
+
+
+# PHY
+phy <- data_PHY %>%
+  ahp.mat(atts = atts_phy, negconvert = TRUE) %>% 
+  ahp.indpref(atts_phy, method = "eigen") %>% 
+  mutate(rowid = 1:nrow(w_eigen_phy)) %>%
+  left_join(cr.df, by = 'rowid') %>%
+  gather(PHY_1, PHY_2, PHY_3, PHY_4, key = "var", value = "pref") 
+
+# Calculate the median of 'pref' grouped by 'var'
+median_values_phy <- phy %>%
+  group_by(var) %>%
+  summarise(median_pref = median(pref))
+
+# Print the result
+print(median_values_phy)
+```
+
+
+```{r Visualization physical criteria weights}
+cr_phy <- data_PHY %>%
+  ahp.mat(atts_phy, negconvert = T) %>% 
+  ahp.cr(atts_phy)
+table(cr_phy <= 0.1)
+
+thres <- 0.1
+dict <- c("PHY_1" = "PHY1", #Shelter Type", 
+          "PHY_2" = "PHY2", # Critical Infrastructure 
+          "PHY_3" = "PHY3", # Facilities phys. Vul.
+          "PHY_4" = "PHY4") # Roads
+
+cr.df <- data_PHY %>%
+  ahp.mat(atts_phy, negconvert = TRUE) %>% 
+  ahp.cr(atts_phy) %>% 
+  data.frame() %>%
+  mutate(rowid = 1:length(cr_phy), cr.dum = as.factor(ifelse(cr_phy <= thres, 1, 0)))
+
+ind_w_phy <- data_PHY %>%
+  ahp.mat(atts = atts_phy, negconvert = TRUE) %>% 
+  ahp.indpref(atts_phy, method = "eigen") %>% 
+  mutate(rowid = 1:nrow(w_eigen_phy)) %>%
+  left_join(cr.df, by = 'rowid') %>%
+  gather(PHY_1, PHY_2, PHY_3, PHY_4, key = "var", value = "pref") %>%
+  ggplot(aes(x = var, y = pref)) + 
+  geom_violin(alpha = 0.6, width = 0.8, color = "transparent", fill = "gray") +
+  geom_boxplot(alpha = 0, width = 0.3, color = "#808080") +
+  geom_jitter(alpha = 0.6, height = 0, width = 0.1, aes(color = cr.dum)) +
+  scale_x_discrete("", label = dict) +
+  scale_y_continuous("Weight (dominant eigenvalue)", 
+                     labels = scales::percent, 
+                     breaks = c(seq(0,0.9,0.1)),
+                     limits = c(0, 0.7)) +
+  guides(color=guide_legend(title=NULL))+
+  scale_color_discrete(breaks = c(0,1), 
+                       labels = c(paste("CR >", thres), 
+                                  paste("CR <", thres))) +
+  labs(NULL, caption = paste("n =", nrow(data_PHY), ",", "Mean CR =",
+                           round(mean(cr_phy),3)))+
+  ggtitle("", subtitle = "Physical vulnerability indicators") +
+  theme_minimal() +
+  theme(legend.position = c(0.75, 0.95),  # Position the legend inside the plot
+        legend.justification = c(0, 1))   # Adjust legend's justification
+
+ind_w_phy
+```
+
+```{r Save plots: ind. weights}
+# Save plots to the results folder
+ggsave(file.path(resultsFolder, "ahp/ind_w_soc.png"), ind_w_soc, width = 12, height = 4)
+ggsave(file.path(resultsFolder, "ahp/ind_w_phy.png"), ind_w_phy, width = 12, height = 4)
+
+# Arrange the two plots vertically
+ind_w <- grid.arrange(ind_w_soc, ind_w_phy, ncol = 2)
+
+ggsave(file.path(resultsFolder, "ahp/ind_w.png"), ind_w, width = 10, height = 5)
+```
+
+```{r Visualization vulnerability domain criteria weights}
+cr_dom <- data_DOM %>%
+  ahp.mat(atts_dom, negconvert = T) %>% 
+  ahp.cr(atts_dom)
+table(cr_dom <= 0.1)
+
+thres <- 0.1
+dict <- c("F_EXP" = "Flood Exposure", 
+          "S_SOC" = "Social Vulnerability", 
+          "S_PHY" = "Physical Vulnerability")
+
+cr.df <- data_DOM %>%
+  ahp.mat(atts_dom, negconvert = TRUE) %>% 
+  ahp.cr(atts_dom) %>% 
+  data.frame() %>%
+  mutate(rowid = 1:length(cr_dom), cr.dum = as.factor(ifelse(cr_dom <= thres, 1, 0)))
+
+data_DOM %>%
+  ahp.mat(atts = atts_dom, negconvert = TRUE) %>% 
+  ahp.indpref(atts_dom, method = "eigen") %>% 
+  mutate(rowid = 1:nrow(w_eigen_dom)) %>%
+  left_join(cr.df, by = 'rowid') %>%
+  gather(F_EXP, S_SOC, S_PHY, key = "var", value = "pref") %>%
+  ggplot(aes(x = var, y = pref)) + 
+  geom_violin(alpha = 0.6, width = 0.8, color = "transparent", fill = "gray") +
+  geom_boxplot(alpha = 0, width = 0.3, color = "#808080") +
+  geom_jitter(alpha = 0.6, height = 0, width = 0.1, aes(color = cr.dum)) +
+  scale_x_discrete("", label = dict) +
+  scale_y_continuous("Weight (dominant eigenvalue)", 
+                     labels = scales::percent, 
+                     breaks = c(seq(0,0.9,0.1))) +
+  guides(color=guide_legend(title=NULL))+
+  scale_color_discrete(breaks = c(0,1), 
+                       labels = c(paste("CR >", thres), 
+                                  paste("CR <", thres))) +
+  labs(NULL, caption = paste("n =", nrow(data_DOM), ",", "Mean CR =",
+                           round(mean(cr_dom),3)))+
+  ggtitle("Distribution of individual priorities", subtitle = "Vulnerability Domain") +
+  theme_minimal()
+```
+
+```{r Visualization weights and CR value}
+# Create a threshold for CR
+thres <- 0.1
+
+# Create a dictionary for labels
+dict <- c("S_SOC" = "Social Vulnerability", 
+          "S_PHY" = "Physical Vulneraility")
+
+# Calculate consistency ratio (CR) and create a data frame
+cr.df <- data_DOM %>%
+  ahp.mat(atts_dom, negconvert = TRUE) %>% 
+  ahp.cr(atts_dom) %>% 
+  data.frame() %>%
+  mutate(rowid = 1:length(cr_dom), cr.dum = as.factor(ifelse(cr_dom <= thres, 1, 0)))
+
+# Generate the plot excluding F_EXP
+dom_w <- data_DOM %>%
+  ahp.mat(atts = atts_dom, negconvert = TRUE) %>% 
+  ahp.indpref(atts_dom, method = "eigen") %>% 
+  mutate(rowid = 1:nrow(w_eigen_dom)) %>%
+  left_join(cr.df, by = 'rowid') %>%
+  gather(S_SOC, S_PHY, key = "var", value = "pref") %>%  # Exclude F_EXP
+  ggplot(aes(x = var, y = pref)) + 
+  geom_violin(alpha = 0.6, width = 0.8, color = "transparent", fill = "gray") +
+  geom_boxplot(alpha = 0, width = 0.3, color = "#808080") +
+  geom_jitter(alpha = 0.6, height = 0, width = 0.1, aes(color = cr.dum)) +
+  scale_x_discrete("", labels = dict) +
+  scale_y_continuous("Weight (dominant eigenvalue)", 
+                     labels = scales::percent, 
+                     breaks = c(seq(0, 0.9, 0.1))) +
+  guides(color = guide_legend(title = NULL)) +
+  scale_color_discrete(breaks = c(0, 1), 
+                       labels = c(paste("CR >", thres), 
+                                  paste("CR <", thres))) +
+  labs(NULL, caption = paste("n =", nrow(data_DOM), ",", "Mean CR =", 
+                             round(mean(cr_dom), 3))) +
+  ggtitle("", subtitle = "Vulnerability Dimension") +
+  theme_minimal() +
+  theme(legend.position = c(0.75, 0.95),  # Position the legend inside the plot
+        legend.justification = c(0, 1))   # Adjust legend's justification
+
+dom_w
+
+ggsave(file.path(resultsFolder, "ahp/dom_w.png"), dom_w, width = 5, height = 5)
+```
+
+```{r Median: dimensions}
+
+dom <- data_DOM %>%
+  ahp.mat(atts = atts_dom, negconvert = TRUE) %>% 
+  ahp.indpref(atts_dom, method = "eigen") %>% 
+  mutate(rowid = 1:nrow(w_eigen_dom)) %>%
+  left_join(cr.df, by = 'rowid') %>%
+  gather(F_EXP, S_SOC, S_PHY, key = "var", value = "pref") 
+
+# Calculate the median of 'pref' grouped by 'var'
+median_values_dom <- dom %>%
+  group_by(var) %>%
+  summarise(median_pref = median(pref))
+
+# Print the result
+print(median_values_dom)
+
+```
+
+Interpretation of the plots:
+
+1. Violin Plot: shows distribution of the weights (dominant eigenvalues) assigned to different indicators of vulnerability > the width shows the density of weights
+2. Superimposed on the violin plot are the individual priority weights (jitter plot) representing the individual preferences for each factor.
+
+
+## Dealing with inconsistent and missing data
+
+Identifying inconsistent pairwise comparisons -> what is the source of this inconsistency?
+- Are respondents making inconsistent choices because some attributes are ill-defined, or that a pairwise comparison between those attributes simply do not make sense?
+
+Compare sample matrix with a perfectly consistent Saaty matrix generated from the preference weights calculated using the dominant eigenvalue method.
+--> compare PCMs with a perfectly consistent Saaty matrix generated from the preference weights calculated using eigenvalue method.
+
+This can be done using ahp.error: loops through all pairwise comparison matrices generated by ahp.mat, and returns a list of error consistency matrices > mean consistency error for each PC
+
+```{r Error matrix}
+
+# creating an error matrix
+gm_mean <- function(x, na.rm=TRUE){
+  exp(sum(log(x[x > 0]), na.rm=na.rm) / length(x))
+}
+
+err_mat_soc <- pcm_soc %>%
+  ahp.error(atts_soc, reciprocal = TRUE) %>%
+  unlist() %>%
+  as.numeric() %>%
+  array(dim=c(length(atts_soc), length(atts_soc), length(pcm_soc))) %>%
+  apply(c(1,2), gm_mean)
+
+colnames(err_mat_soc) <- rownames(err_mat_soc) <- atts_soc
+
+err_mat_soc
+
+err_mat_phy <- pcm_phy %>%
+  ahp.error(atts_phy, reciprocal = TRUE) %>%
+  unlist() %>%
+  as.numeric() %>%
+  array(dim=c(length(atts_phy), length(atts_phy), length(pcm_phy))) %>%
+  apply(c(1,2), gm_mean)
+
+colnames(err_mat_phy) <- rownames(err_mat_phy) <- atts_phy
+
+err_mat_phy
+
+err_mat_dom <- pcm_dom %>%
+  ahp.error(atts_dom, reciprocal = TRUE) %>%
+  unlist() %>%
+  as.numeric() %>%
+  array(dim=c(length(atts_dom), length(atts_dom), length(pcm_dom))) %>%
+  apply(c(1,2), gm_mean)
+
+colnames(err_mat_dom) <- rownames(err_mat_dom) <- atts_dom
+
+err_mat_dom
+
+```
+The above matrix is a quick way for revealing inconsistencies within the data, but it is not the best way as it can be biased. If one or more decision-maker makes an incredibly inconsistent pairwise comparison, the consistency error for that pairwise comparison will be very high, which biases the mean error consistency of that pairwise comparison upwards even if many other decision-makers are making perfectly consistent choices.
+
+### Finding inconsistent pairwise comparisons by maximum
+A better way, would be to extract the pairwise comparison with the maximum inconsistency error, and returning a list of the most inconsistent pairwise comparisons for each decision-maker. This process is automated in the ahp.pwerror function, which returns a dataframe of the top three most inconsistent pairwise comparison made by each decision-maker.
+
+```{r Inconsistent pairwise comparisons}
+data_SOC %>%
+  ahp.mat(atts_soc) %>%
+  ahp.pwerror(atts_soc) %>%
+  head()
+
+data_PHY %>%
+  ahp.mat(atts_phy) %>%
+  ahp.pwerror(atts_phy) %>%
+  head()
+
+data_DOM %>%
+  ahp.mat(atts_dom) %>%
+  ahp.pwerror(atts_dom) %>%
+  head()
+```
+
+
+```{r Visualizing PC inconsistency}
+# Visualizing the highest inconsistencies in pairwise comparisons 
+
+# Define custom colors for each rank
+rank_colors <- c("top1" = "#636363", "top2" = "#bdbdbd", "top3" = "#f0f0f0")
+
+# social
+top_error_soc <- pcm_soc %>%
+  ahp.pwerror(atts_soc) %>% 
+  gather(top1, top2, top3, key = "max", value = "pair") %>%
+  table() %>%
+  as.data.frame() %>%
+  ggplot(aes(x = pair, y = Freq, fill = max)) + 
+  geom_bar(stat = 'identity', color = "grey50", width = 0.3) +
+  scale_y_continuous("Error frequency", breaks = c(seq(0,180,20))) +
+  scale_fill_manual(values = rank_colors) +  # Use manual scale with custom colors
+  scale_x_discrete("Indicator pair") +
+  guides(fill = guide_legend(title="Inconsistency Rank")) +
+  theme(axis.text.x = element_text(angle = 20, hjust = 1),
+        panel.background = element_rect(fill = NA),
+        panel.grid.major.y = element_line(colour = "grey80"),
+        panel.grid.major.x = element_blank(),
+        panel.ontop = FALSE) +
+  labs(title = "SOC Indicators") +
+  theme(legend.position = c(0.7, 1),  # Position the legend inside the plot
+        legend.justification = c(0, 1))   # Adjust legend's justification
+  
+
+top_error_soc
+
+# physical
+top_error_phy <- pcm_phy %>%
+  ahp.pwerror(atts_phy) %>% 
+  gather(top1, top2, top3, key = "max", value = "pair") %>%
+  table() %>%
+  as.data.frame() %>%
+  ggplot(aes(x = pair, y = Freq, fill = max)) + 
+  geom_bar(stat = 'identity', color = "grey50", width = 0.3) +
+  scale_y_continuous("Error frequency", breaks = c(seq(0,180,20))) +
+  scale_fill_manual(values = rank_colors) +  # Use manual scale with custom colors
+  scale_x_discrete("Indicator pair") +
+  guides(fill = guide_legend(title="Inconsistency Rank")) +
+  theme(axis.text.x = element_text(angle = 20, hjust = 1),
+        panel.background = element_rect(fill = NA),
+        panel.grid.major.y = element_line(colour = "grey80"),
+        panel.grid.major.x = element_blank(),
+        panel.ontop = FALSE) +
+  labs(title = "PHY Indicators") +
+  theme(legend.position = "none")
+
+top_error_phy
+
+# domain
+pcm_dom %>%
+  ahp.pwerror(atts_dom) %>% 
+  gather(top1, top2, top3, key = "max", value = "pair") %>%
+  table() %>%
+  as.data.frame() %>%
+  ggplot(aes(x = pair, y = Freq, fill = max)) + 
+  geom_bar(stat = 'identity', color = "grey50", width = 0.3) +
+  scale_y_continuous("Frequency", breaks = c(seq(0,180,20))) +
+  scale_fill_manual(values = rank_colors) +  # Use manual scale with custom colors
+  scale_x_discrete("Indicator pair") +
+  guides(fill = guide_legend(title="Inconsistency Rank")) +
+  theme(axis.text.x = element_text(angle = 20, hjust = 1),
+        panel.background = element_rect(fill = NA),
+        panel.grid.major.y = element_line(colour = "grey80"),
+        panel.grid.major.x = element_blank(),
+        panel.ontop = F) +
+  labs(title = "Frequency of Inconsistency Ranks for Vulnerability Domain")
+
+```
+
+The plot helps identify which pairs of criteria or alternatives have the most frequent errors in judgment during the AHP analysis. Pairs with higher error frequencies may indicate areas of inconsistency or uncertainty in decision-making, which could affect the reliability of the AHP results. Analyzing the patterns of errors can provide insights into which comparisons are most challenging or ambiguous, allowing for adjustments or improvements in the decision-making process.
+
+```{r Save plots: inconsistency}
+# Save plots to the "results" folder
+ggsave(file.path(resultsFolder, "ahp/top_error_soc.png"), top_error_soc, width = 12, height = 4)
+ggsave(file.path(resultsFolder, "ahp/top_error_phy.png"), top_error_phy, width = 12, height = 4)
+
+# Arrange the two plots vertically
+ind_w <- grid.arrange(top_error_soc, top_error_phy, ncol = 2)
+
+ggsave(file.path(resultsFolder, "ahp/top_error.png"), ind_w, width = 10, height = 5)
+```
+
+
+### Transforming inconsistent matrices
+Inconsistent pairwise matrices are problematic > Harker (1987) described a method to replace inconsistent values: using the error matrix, we can suggest a value that would reduce the inconsistency.
+
+Harker's method:
+
+1. Chose a PCM that results in unsatisfactory CR values (> 0.1). 
+2. Find PC with max error
+3. Duplicate the matrix and replace the pairwise comparison in the new matrix with the max. error with 0, and its two corresponding diagonal entries with 2.
+4. Compute new weights (as in ahp.indpref with method = "eigen")
+5. Replace the pairwise comparison with those weights
+
+For an in-depth explication see Saaty (2003). 
+
+Try Harker's method: https://rdrr.io/github/frankiecho/ahpsurvey/man/ahp.harker.html or https://rpubs.com/hongnguyen/GDM_AHP_Full
+
+The function ahp.harker transforms inconsistent PCMs using the following arguments: 
+- round is logical and tells ahp.harker whether to convert the newly replaced values to integers and its reciprocals, and can be set to TRUE if desired.
+
+- iterations denotes how many pairwise comparisons should be changed. For example, if iterations = 3, ahp.harker changes the first, second, and third most inconsistent pairwise comparisons using that method. Researchers should think carefully how many pairwise comparisons should be replaced, as every time a pairwise comparison is replaced, some information is inevitably lost. Note that the maximum number of iterations is capped at iterations≤12n(n−1) with n being the number of attributes.
+
+- stopcr: The stopping Consistency Ratio. It complements iterations by giving iterations a criteria to stop when a matrix is sufficiently consistent. ahp.harker will continue looping and replacing more elements of the pairwise comparison matrices until the consistency ratio of the new matrix is lower than stopcr, or the maximum number of iterations is reached, and will stop and move onto the next individual. When stopcr is set, the number of replaced elements will differ amongst each decision-maker. Thus, it is advised that the analyst set printiter = TRUE to see how many iterations has the pairwise matrix of that individual has been modified by the algorithm.
+
+- limit: In many cases, the algorithm will intend to replace a value with a number higher than 9 or lower than 1/9. limit caps the maximum and minimum value of the replacement to 9 and 1/9 respectively.
+
+- printiter is a logical argument of whether the number of iterations taken for each pairwise matrix is reported or not. Generally it is not needed if stopcr is not specified. When stopcr is specified, this is a good way of identifying how many pairwise comparisons are actually replaced by the algorithm for each decision maker. The printout above shows "Ind 1 Iterations: 1",    which shows that although I specified iterations = 10, individual 1 (Ind 1) was only iterated one time before it reached the target consistency ratio, 0.1. Only one element was replaced.
+
+
+```{r Harkers method}
+# SOC 
+
+# max number of iterations based on n
+n_iterations <- length(atts_soc)*(length(atts_soc)-1)/2
+n_iterations
+
+crmat_soc <- matrix(NA, nrow = nrow(data_SOC), ncol = n_iterations + 1)
+colnames( crmat_soc) <- 0:n_iterations
+
+crmat_soc[,1] <- data_SOC %>%
+    ahp.mat(atts_soc, negconvert = TRUE) %>%
+    ahp.cr(atts_soc)
+
+for (it in 1:n_iterations){
+   crmat_soc[,it+1] <- data_SOC %>%
+    ahp.mat(atts_soc, negconvert = TRUE) %>%
+    ahp.harker(atts_soc, iterations = it, stopcr = 0.1,
+               limit = T, round = T, printiter = T) %>%
+    ahp.cr(atts_soc)
+}
+
+data.frame(table( crmat_soc[,1] <= 0.1), 
+           table( crmat_soc[,3] <= 0.1),
+           table( crmat_soc[,5] <= 0.1),
+           table( crmat_soc[,7] <= 0.1)) %>% 
+  dplyr::select(Var1, Freq, Freq.1, Freq.2, Freq.3) %>%
+  rename("Consistent?" = "Var1",
+         "No iteration" = "Freq",
+         "2 iterations" = "Freq.1",
+         "4 iterations" = "Freq.2",
+         "6 iterations" = "Freq.3") %>% 
+  kable() %>% kable_styling()
+
+# PHY
+
+# max number of iterations based on n
+n_iterations <- length(atts_phy)*(length(atts_phy)-1)/2
+n_iterations
+
+crmat_phy <- matrix(NA, nrow = nrow(data_PHY), ncol = n_iterations + 1)
+colnames( crmat_phy) <- 0:n_iterations
+
+crmat_phy[,1] <- data_PHY %>%
+    ahp.mat(atts_phy, negconvert = TRUE) %>%
+    ahp.cr(atts_phy)
+
+for (it in 1:n_iterations){
+   crmat_phy[,it+1] <- data_PHY %>%
+    ahp.mat(atts_phy, negconvert = TRUE) %>%
+    ahp.harker(atts_phy, iterations = it, stopcr = 0.1,
+               limit = T, round = T, printiter = T) %>%
+    ahp.cr(atts_phy)
+}
+
+data.frame(table( crmat_phy[,1] <= 0.1), 
+           table( crmat_phy[,3] <= 0.1),
+           table( crmat_phy[,5] <= 0.1),
+           table( crmat_phy[,7] <= 0.1)) %>% 
+  dplyr::select(Var1, Freq, Freq.1, Freq.2, Freq.3) %>%
+  rename("Consistent?" = "Var1",
+         "No iteration" = "Freq",
+         "2 iterations" = "Freq.1",
+         "4 iterations" = "Freq.2",
+         "6 iterations" = "Freq.3") %>% 
+  kable() %>% kable_styling()
+
+# DOM
+
+# max number of iterations based on n
+n_iterations_dom <- length(atts_dom)*(length(atts_dom)-1)/2
+n_iterations_dom
+
+crmat_dom <- matrix(NA, nrow = nrow(data_DOM), ncol = n_iterations_dom + 1)
+colnames( crmat_dom) <- 0:n_iterations_dom
+
+crmat_dom[,1] <- data_DOM %>%
+    ahp.mat(atts_dom, negconvert = TRUE) %>%
+    ahp.cr(atts_dom)
+
+for (it in 1:n_iterations_dom){
+   crmat_dom[,it+1] <- data_DOM %>%
+    ahp.mat(atts_dom, negconvert = TRUE) %>%
+    ahp.harker(atts_dom, iterations = it, stopcr = 0.1,
+               limit = T, round = T, printiter = T) %>%
+    ahp.cr(atts_dom)
+}
+
+data.frame(table( crmat_dom[,1] <= 0.1), 
+           table( crmat_dom[,3] <= 0.1)) %>% 
+  dplyr::select(Var1, Freq, Freq.1) %>%
+  rename("Consistent?" = "Var1",
+         "No iteration" = "Freq",
+         "2 iterations" = "Freq.1") %>% 
+  kable() %>% kable_styling()
+```
+
+
+```{r Visualize iterations}
+# soc 
+harker_soc <- crmat_soc %>% 
+  as.data.frame() %>%
+  gather(key = "iter", value = "cr") %>%
+  mutate(iter = as.integer(iter)) %>%
+  ggplot(aes(x = iter, y = cr, group = iter)) +
+  geom_hline(yintercept = 0.1, color = "red", linetype = "dashed")+
+  geom_jitter(alpha = 0.5, width = 0.3, height = 0, color = "turquoise4") +
+  geom_boxplot(fill = "transparent", color = "#808080", outlier.shape = NA) + 
+  scale_x_continuous("Iterations", breaks = 0:n_iterations) +
+  scale_y_continuous("Consistency Ratio", limits = c(0,0.5)) +
+  ggtitle("SOC Indicators") +
+  theme_minimal()
+
+harker_soc
+
+# phy 
+
+harker_phy <- crmat_phy %>% 
+  as.data.frame() %>%
+  gather(key = "iter", value = "cr") %>%
+  mutate(iter = as.integer(iter)) %>%
+  ggplot(aes(x = iter, y = cr, group = iter)) +
+  geom_hline(yintercept = 0.1, color = "red", linetype = "dashed")+
+  geom_jitter(alpha = 0.5, width = 0.3, height = 0, color = "turquoise4") +
+  geom_boxplot(fill = "transparent", color = "#808080", outlier.shape = NA) + 
+  scale_x_continuous("Iterations", breaks = 0:n_iterations) +
+  scale_y_continuous("Consistency Ratio", limits = c(0,0.5)) +
+  ggtitle("PHY Indicators") +
+  theme_minimal()
+
+harker_phy
+
+# dom
+harker_dom <- crmat_dom %>% 
+  as.data.frame() %>%
+  gather(key = "iter", value = "cr") %>%
+  mutate(iter = as.integer(iter)) %>%
+  ggplot(aes(x = iter, y = cr, group = iter)) +
+  geom_hline(yintercept = 0.1, color = "red", linetype = "dashed")+
+  geom_jitter(alpha = 0.5, width = 0.3, height = 0, color = "turquoise4") +
+  geom_boxplot(fill = "transparent", color = "#808080", outlier.shape = NA) + 
+  scale_x_continuous("Iterations", breaks = 0:n_iterations_dom) +
+  scale_y_continuous("Consistency Ratio", limits = c(0,0.5)) +
+  ggtitle("Vulnerability Dimension") +
+  theme_minimal()
+
+harker_dom
+```
+
+```{r Save plots: Harker}
+# Save plots to the "results" folder
+ggsave(file.path(resultsFolder, "ahp/harker_soc.png"), harker_soc, width = 12, height = 4)
+ggsave(file.path(resultsFolder, "ahp/harker_phy.png"), harker_phy, width = 12, height = 4)
+ggsave(file.path(resultsFolder, "ahp/harker_dom.png"), harker_dom, width = 12, height = 4)
+
+# Arrange the two plots vertically
+harker_it <- grid.arrange(harker_soc, harker_phy, ncol = 2)
+
+ggsave(file.path(resultsFolder, "ahp/harker_it.png"), harker_it, width = 10, height = 5)
+```
+
+
+The plot shows the Consistency Ratios (CR) under different number of iterations with the maximum deviation method for the PCMs. 
+
+Interpretation: 
+Social susceptibility individual criteria weights: After 6 iterations only one PCMs shows inconsistency. After 6 iterations, the number of inconsistent CR values does not change anymore. Therefore we can carry on using 2 iterations for the PCM transformation. -> it = 6
+
+Physical susceptibility criteria individual criteria weights: After 4 iterations only one PCM shows inconsistency. After that the number of inconsistent CR values does not change anymore. -> it = 4
+
+Vulnerability Domain: After one iteration only one PCM shows inconsistency -> it = 1
+
+Now, we can again compute the individual priorities after handling the inconsistent data. 
+
+```{r Corrected individual weights}
+# SOC
+
+# Implementing the Harkers method using it = 6 and threshold = 0.1 and check the new CR values and consistency 
+it_soc <- 2
+thres <- 0.1
+cr.df1_soc <- data.frame(cr = data_SOC %>%
+  ahp.mat(atts_soc, negconvert = TRUE) %>%
+  ahp.harker(atts_soc, iterations = it_soc, stopcr = 0.1, limit = T, round = T, printiter = F) %>%
+  ahp.cr(atts_soc))
+
+cr.df2_soc <- cr.df1_soc %>%
+  mutate(rowid = 1:nrow(data_SOC), cr.dum = as.factor(ifelse(. <= thres, 1, 0))) %>% # show inconsistency: if cr <= thres 0.1 -> 1, else 0
+  dplyr::select(cr.dum, rowid)
+
+# Join the two data frames by columns
+corr_cr_soc <- cbind(cr.df1_soc, cr.df2_soc)
+
+# Change column names
+colnames(corr_cr_soc)[colnames(corr_cr_soc) == "cr.dum"] <- "Consistency"  # Change column name "cr.dum" to "Inconsistency"
+colnames(corr_cr_soc)[colnames(corr_cr_soc) == "rowid"] <- "Expert_ID"
+colnames(corr_cr_soc)[colnames(corr_cr_soc) == "cr"] <- "CR"  
+
+kable(corr_cr_soc) %>% kable_styling()
+
+# PHY 
+
+# Implementing the Harkers method using it = 6 and threshold = 0.1 and check the new CR values and consistency 
+it_phy <- 4
+thres <- 0.1
+cr.df1_phy <- data.frame(cr = data_PHY %>%
+  ahp.mat(atts_phy, negconvert = TRUE) %>%
+  ahp.harker(atts_phy, iterations = it_phy, stopcr = 0.1, limit = T, round = T, printiter = F) %>%
+  ahp.cr(atts_phy))
+
+cr.df2_phy <- cr.df1_phy %>%
+  mutate(rowid = 1:nrow(data_PHY), cr.dum = as.factor(ifelse(. <= thres, 1, 0))) %>% # show inconsistency: if cr <= thres 0.1 -> 1, else 0
+  dplyr::select(cr.dum, rowid)
+
+# Join the two data frames by columns
+corr_cr_phy <- cbind(cr.df1_phy, cr.df2_phy)
+
+# Change column names
+colnames(corr_cr_phy)[colnames(corr_cr_phy) == "cr.dum"] <- "Consistency"  # Change column name "cr.dum" to "Inconsistency"
+colnames(corr_cr_phy)[colnames(corr_cr_phy) == "rowid"] <- "Expert_ID"
+colnames(corr_cr_phy)[colnames(corr_cr_phy) == "cr"] <- "CR"  
+
+kable(corr_cr_phy) %>% kable_styling()
+
+# DOM
+
+# Implementing the Harkers method using it = 1 and threshold = 0.1 and check the new CR values and consistency 
+it_dom <- 2 # Change iteration number based on results from plots above 
+thres <- 0.1
+cr.df1_dom <- data.frame(cr = data_DOM %>%
+  ahp.mat(atts_dom, negconvert = TRUE) %>%
+  ahp.harker(atts_dom, iterations = it_dom, stopcr = 0.1, limit = T, round = T, printiter = F) %>%
+  ahp.cr(atts_dom))
+
+cr.df2_dom <- cr.df1_dom %>%
+  mutate(rowid = 1:nrow(data_DOM), cr.dum = as.factor(ifelse(. <= thres, 1, 0))) %>% # show inconsistency: if cr <= thres 0.1 -> 1, else 0
+  dplyr::select(cr.dum, rowid)
+
+# Join the two data frames by columns
+corr_cr_dom <- cbind(cr.df1_dom, cr.df2_dom)
+
+# Change column names
+colnames(corr_cr_dom)[colnames(corr_cr_dom) == "cr.dum"] <- "Consistency"  # Change column name "cr.dum" to "Inconsistency"
+colnames(corr_cr_dom)[colnames(corr_cr_dom) == "rowid"] <- "Expert_ID"
+colnames(corr_cr_dom)[colnames(corr_cr_dom) == "cr"] <- "CR"  
+
+kable(corr_cr_dom) %>% kable_styling()
+
+```
+0 represents still inconsistent values and 1 represents consistent values.
+
+```{r Plot corrected priority weights}
+
+# Plot individual weights
+
+# SOC
+data_SOC %>%
+  ahp.mat(atts = atts_soc, negconvert = TRUE) %>% 
+  ahp.harker(atts_soc, iterations = it_soc, stopcr = 0.1, limit = T, round = T, printiter = F) %>%
+  ahp.indpref(atts_soc, method = "eigen") %>% 
+  mutate(rowid = 1:nrow(data_SOC)) %>%
+  left_join(cr.df2_soc, by = 'rowid') %>%
+  gather(SOC_1, SOC_2, SOC_3, SOC_4, key = "var", value = "pref") %>%
+  ggplot(aes(x = var, y = pref)) + 
+  geom_violin(alpha = 0.6, width = 0.8, color = "transparent", fill = "gray") +
+  geom_jitter(alpha = 0.6, height = 0, width = 0.1, aes(color = cr.dum)) +
+  geom_boxplot(alpha = 0, width = 0.3, color = "#808080") +
+  scale_x_discrete("Attribute", label = dict) +
+  scale_y_continuous("Weight (dominant eigenvalue)", 
+                     labels = scales::percent, breaks = c(seq(0,0.7,0.1))) +
+  guides(color=guide_legend(title=NULL))+
+  scale_color_discrete(breaks = c(0,1), 
+                       labels = c(paste("CR >", thres), 
+                                  paste("CR <", thres))) +
+  labs(NULL, caption =paste("n =",nrow(data_SOC), ",", "Mean CR =",round(mean(cr.df1_soc$cr),3)))+
+  theme_minimal()
+
+# PHY 
+
+data_PHY %>%
+  ahp.mat(atts = atts_phy, negconvert = TRUE) %>% 
+  ahp.harker(atts_phy, iterations = it_phy, stopcr = 0.1, limit = T, round = T, printiter = F) %>%
+  ahp.indpref(atts_phy, method = "eigen") %>% 
+  mutate(rowid = 1:nrow(data_PHY)) %>%
+  left_join(cr.df2_phy, by = 'rowid') %>%
+  gather(PHY_1, PHY_2, PHY_3, PHY_4, key = "var", value = "pref") %>%
+  ggplot(aes(x = var, y = pref)) + 
+  geom_violin(alpha = 0.6, width = 0.8, color = "transparent", fill = "gray") +
+  geom_jitter(alpha = 0.6, height = 0, width = 0.1, aes(color = cr.dum)) +
+  geom_boxplot(alpha = 0, width = 0.3, color = "#808080") +
+  scale_x_discrete("Attribute", label = dict) +
+  scale_y_continuous("Weight (dominant eigenvalue)", 
+                     labels = scales::percent, breaks = c(seq(0,0.7,0.1))) +
+  guides(color=guide_legend(title=NULL))+
+  scale_color_discrete(breaks = c(0,1), 
+                       labels = c(paste("CR >", thres), 
+                                  paste("CR <", thres))) +
+  labs(NULL, caption =paste("n =",nrow(data_PHY), ",", "Mean CR =",round(mean(cr.df1_phy$cr),3)))+
+  theme_minimal()
+
+# DOM
+
+data_DOM %>%
+  ahp.mat(atts = atts_dom, negconvert = TRUE) %>% 
+  ahp.harker(atts_dom, iterations = it_dom, stopcr = 0.1, limit = T, round = T, printiter = F) %>%
+  ahp.indpref(atts_dom, method = "eigen") %>% 
+  mutate(rowid = 1:nrow(data_DOM)) %>%
+  left_join(cr.df2_dom, by = 'rowid') %>%
+  gather(F_EXP, S_SOC, S_PHY, key = "var", value = "pref") %>%
+  ggplot(aes(x = var, y = pref)) + 
+  geom_violin(alpha = 0.6, width = 0.8, color = "transparent", fill = "gray") +
+  geom_jitter(alpha = 0.6, height = 0, width = 0.1, aes(color = cr.dum)) +
+  geom_boxplot(alpha = 0, width = 0.3, color = "#808080") +
+  scale_x_discrete("Attribute", label = dict) +
+  scale_y_continuous("Weight (dominant eigenvalue)", 
+                     labels = scales::percent, breaks = c(seq(0,0.7,0.1))) +
+  guides(color=guide_legend(title=NULL))+
+  scale_color_discrete(breaks = c(0,1), 
+                       labels = c(paste("CR >", thres), 
+                                  paste("CR <", thres))) +
+  labs(NULL, caption =paste("n =",nrow(data_DOM), ",", "Mean CR =",round(mean(cr.df1_dom$cr),3)))+
+  theme_minimal()
+```
+
+Plot shows individual preference weights with respect to goal (2 iteration)
+
+Drop the remaining inconsistent PCMs???
+
+```{r Corrected individual criteria weights}
+# make table as to see which responses are still not consistent > drop these?
+
+# SOC
+
+# Show individual preference weights after applying Harkers method
+corr_w_soc <- data_SOC %>%
+  ahp.mat(atts = atts_soc, negconvert = TRUE) %>% 
+  ahp.harker(atts_soc, iterations = it_soc, stopcr = 0.1, limit = T, round = T, printiter = F) %>%
+  ahp.indpref(atts_soc, method = "eigen") %>% 
+  mutate(rowid = 1:nrow(data_SOC)) %>%
+  left_join(cr.df2_soc, by = 'rowid')
+
+# Rename columns
+corr_w_soc <- corr_w_soc %>%
+  dplyr::select(ID = rowid, everything()) %>%  # Rename rowid to ID and bring it to the first column
+  rename(Consistency = cr.dum)  # Rename the last column to 'Consistency'
+
+kable(corr_w_soc, caption = "Corrected individual preference weights: Social vulnerability indicators") %>% kable_styling()
+
+# Filter out the individual answers that are still inconsistent after Harkers transformation
+corr_w_soc_filtered <- corr_w_soc %>%
+  filter(Consistency != 0) # This filters out rows where cr.dum is not equal to 0
+
+# PHY
+
+# Show individual preference weights after applying Harkers method
+corr_w_phy <- data_PHY %>%
+  ahp.mat(atts = atts_phy, negconvert = TRUE) %>% 
+  ahp.harker(atts_phy, iterations = it_phy, stopcr = 0.1, limit = T, round = T, printiter = F) %>%
+  ahp.indpref(atts_phy, method = "eigen") %>% 
+  mutate(rowid = 1:nrow(data_PHY)) %>%
+  left_join(cr.df2_phy, by = 'rowid')
+
+# Rename columns
+corr_w_phy <- corr_w_phy %>%
+  dplyr::select(ID = rowid, everything()) %>%  # Rename rowid to ID and bring it to the first column
+  rename(Consistency = cr.dum)  # Rename the last column to 'Consistency'
+
+kable(corr_w_phy, caption = "Corrected individual preference weights: Physical vulnerability indicators") %>% kable_styling()
+
+# Filter out the individual answers that are still inconsistent after Harkers transformation
+corr_w_phy_filtered <- corr_w_phy %>%
+  filter(Consistency != 0) # This filters out rows where cr.dum is not equal to 0
+
+# DOM
+
+# Show individual preference weights after applying Harkers method
+corr_w_dom <- data_DOM %>%
+  ahp.mat(atts = atts_dom, negconvert = TRUE) %>% 
+  ahp.harker(atts_dom, iterations = it_dom, stopcr = 0.1, limit = T, round = T, printiter = F) %>%
+  ahp.indpref(atts_dom, method = "eigen") %>% 
+  mutate(rowid = 1:nrow(data_DOM)) %>%
+  left_join(cr.df2_dom, by = 'rowid')
+
+# Rename columns
+corr_w_dom <- corr_w_dom %>%
+  dplyr::select(ID = rowid, everything()) %>%  # Rename rowid to ID and bring it to the first column
+  rename(Consistency = cr.dum)  # Rename the last column to 'Consistency'
+
+kable(corr_w_dom, caption = "Corrected individual preference weights: Vulnerability Domain") %>% kable_styling()
+
+# Filter out the individual answers that are still inconsistent after Harkers transformation
+corr_w_dom_filtered <- corr_w_dom %>%
+  filter(Consistency != 0) # This filters out rows where cr.dum is not equal to 0
+
+```
+
+```{r Consistent PCMs}
+
+# Create data frame only containing consistent PCMs, from the participants ID with Consistency = 0
+
+# SOC: ID 6
+data_SOC_filtered <- data_SOC[-c(2, 6), ]
+
+# PHY: ID 6 & ID 11
+data_PHY_filtered <- data_PHY[-c(6, 11), ]
+
+# DOM: ID 6 & ID 11
+data_DOM_filtered <- data_DOM[-c(6, 11), ]
+```
+
+```{r Corrected aggregated criteria weights}
+# SOC
+
+# Aggregated priorities
+corr_agg_soc <- data_SOC_filtered %>%
+  ahp.mat(atts = atts_soc, negconvert = TRUE) %>% 
+  ahp.harker(atts_soc, iterations = it_soc, stopcr = 0.1, limit = T, round = T, printiter = F) %>%
+  ahp.aggpref(atts_soc, method = "eigen", aggmethod = "arithmetic")
+
+corr_agg_soc
+corr_agg_soc <- as.data.frame(corr_agg_soc)
+
+# Check, if the sum of the aggregated values equals 1
+total_sum_soc <- sum(corr_agg_soc)
+total_sum_soc
+
+# Present corrected aggregated priority weights: social 
+corr_agg_soc <- corr_agg_soc %>% add_column(., name = atts_name_soc, .after = 0)
+colnames(corr_agg_soc) <- c("Indicator", "Aggregated preference weight")
+
+kable(corr_agg_soc, caption = "Corrected aggregated preference weights: Social vulnerability indicators") %>% kable_styling()
+
+# PHY
+
+# Aggregated priorities
+corr_agg_phy <- data_PHY_filtered %>%
+  ahp.mat(atts = atts_phy, negconvert = TRUE) %>% 
+  ahp.harker(atts_phy, iterations = it_phy, stopcr = 0.1, limit = T, round = T, printiter = F) %>%
+  ahp.aggpref(atts_phy, method = "eigen", aggmethod = "arithmetic")
+
+corr_agg_phy
+corr_agg_phy <- as.data.frame(corr_agg_phy)
+
+# Check, if the sum of the aggregated values equals 1
+total_sum_phy <- sum(corr_agg_phy)
+total_sum_phy
+
+# Present corrected aggregated priority weights: physical
+corr_agg_phy <- corr_agg_phy %>% add_column(., name = atts_name_phy, .after = 0)
+colnames(corr_agg_phy) <- c("Indicator", "Aggregated preference weight")
+
+kable(corr_agg_phy, caption = "Corrected aggregated preference weights: Physical vulnerability indicators") %>% kable_styling()
+
+# DOM
+
+# Aggregated priorities
+corr_agg_dom <- data_DOM_filtered %>%
+  ahp.mat(atts = atts_dom, negconvert = TRUE) %>% 
+  ahp.harker(atts_dom, iterations = it_dom, stopcr = 0.1, limit = T, round = T, printiter = F) %>%
+  ahp.aggpref(atts_dom, method = "eigen", aggmethod = "arithmetic")
+
+corr_agg_dom
+corr_agg_dom <- as.data.frame(corr_agg_dom)
+
+# Check, if the sum of the aggregated values equals 1
+total_sum_dom <- sum(corr_agg_dom)
+total_sum_dom
+
+# Present corrected aggregated priority weights: domain
+corr_agg_dom <- corr_agg_dom %>% add_column(., name = atts_name_dom, .after = 0)
+colnames(corr_agg_dom) <- c("Indicator", "Aggregated preference weight")
+
+kable(corr_agg_dom, caption = "Corrected aggregated preference weights: Vulnerability Domain") %>% kable_styling()
+```
+
+```{r Corrected ggregated PCMs}
+corr_agg_mat_soc <- data_SOC_filtered %>%
+  ahp.mat(atts = atts_soc, negconvert = TRUE) %>% 
+  ahp.aggjudge(atts_soc, aggmethod = "arithmetic")
+
+corr_agg_mat_phy <- data_PHY_filtered %>%
+  ahp.mat(atts = atts_phy, negconvert = TRUE) %>% 
+  ahp.aggjudge(atts_phy, aggmethod = "arithmetic")
+
+corr_agg_mat_dom <-data_DOM_filtered %>%
+  ahp.mat(atts = atts_dom, negconvert = TRUE) %>% 
+  ahp.aggjudge(atts_dom, aggmethod = "arithmetic")
+
+print(corr_agg_mat_soc)
+print(corr_agg_mat_phy)
+print(corr_agg_mat_dom)
+```
+
+Still inconsistent results are filtered out for aggregation of final weights and subsequent fuzzification
+
+# Fuzzy AHP
+see separate script FAHP.Rmd
+
+
+# -----------------------------------------
+
+# Output section for latex table formatting
+
+```{r Latex tables}
+# Create Latex tables 
+
+latex_table <- xtable(w_soc_agg_mean, 
+                      caption = "Aggregated preference weights: Social vulnerability indicators", 
+                      label = "tab:mean_agg_mat_soc",
+                      align = c("l", "l", "r"),  # Column alignment
+                      caption.placement = "top",  # Place caption on top
+                      booktabs = TRUE,  # Use booktabs formatting
+                      caption.side = "top",  # Position caption above the table
+                      size = "small",  # Font
+                      )
+latex_table
+
+# Convert the matrix to an xtable object
+latex_table <- xtable(agg_mat_soc)
+
+# Print the LaTeX-formatted table
+print(latex_table, include.rownames = TRUE)
+```
+
+```{r}
+
+kable(corr_w_dom, caption = "Corrected individual preference weights: Vulnerability Domain") %>% kable_styling()
+
+latex_table <- xtable(corr_w_dom, 
+                      caption = "Corrected individual preference weights: Vulnerability Dimension", 
+                      label = "tab:corr_w_dom",
+                      align = c("l", "c", "c", "c", "c", "r"),  # Column alignment
+                      caption.placement = "top",  # Place caption on top
+                      booktabs = TRUE,  # Use booktabs formatting
+                      caption.side = "top",  # Position caption above the table
+                      size = "small",  # Font
+                      )
+latex_table
+```
+

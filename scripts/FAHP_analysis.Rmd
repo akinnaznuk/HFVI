@@ -1,0 +1,903 @@
+---
+title: "FAHP analysis"
+author: ""
+date: "2024-04-02"
+output: html_document
+---
+
+This code calculates the Fuzzy AHP weights based on the PCMs generated in the AHP.Rmd. It fuzzifies the inconsistency-corrected AHP PCMs and calculates individual and aggregates fuzzy weights and a final deffuzified value, which serves as final weight input for the HFVI calculation (HFVI.Rmd)
+
+
+```{r setup, include=FALSE, warning = F}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
+
+# Install/load packages
+## Default repository
+local({r <- getOption("repos")
+       r["CRAN"] <- "http://cran.r-project.org" 
+       options(repos = r)
+})
+
+check_pkg <- function(x)
+  {
+    if (!require(x, character.only = TRUE))
+    {
+      install.packages(x, dep = TRUE)
+        if(!require(x, character.only = TRUE)) stop("Package not found")
+    }
+}
+
+check_pkg("sf")
+check_pkg("ggplot2")
+check_pkg("plotly")
+check_pkg("tidyverse")
+check_pkg("leaflet")
+check_pkg("dplyr")
+check_pkg("XML")
+check_pkg("mapview")
+check_pkg("lubridate")
+check_pkg("knitr")
+check_pkg("xtable")
+check_pkg("kableExtra")
+check_pkg("gridExtra")
+check_pkg("ahpsurvey")
+check_pkg("FuzzyAHP")
+check_pkg("readxl")
+check_pkg("FuzzyAHP")
+```
+
+# Initialization of project paths
+```{r init_paths, warning = FALSE, message = FALSE, fig.align = "center"}
+library(here)
+here::i_am("scripts/FAHP_analysis.Rmd")
+knitr::opts_knit$set(root.dir = here::here())
+
+dataFolder   <- here::here("data")   # Data folder
+RFolder      <- here::here()         # RScript folder (i.e. where project file resides)
+resultsFolder <- here::here("outputs/results")   # Figure folder
+```
+
+
+```{r Read data}
+# AHP results: Data set containing all AHP questionnaire answers (rows) for each attribute
+# Read CSV files from the 'data' folder
+data_SOC <- read.csv(file.path(dataFolder, "ahp/ahp_soc.csv"), sep = ";", header = TRUE) %>%
+  dplyr::select(-1)
+
+data_PHY <- read.csv(file.path(dataFolder, "ahp/ahp_phy.csv"), sep = ";", header = TRUE) %>%
+  dplyr::select(-1)
+
+data_DOM <- read.csv(file.path(dataFolder, "ahp/ahp_dom.csv"), sep = ";", header = TRUE) %>%
+  dplyr::select(-1)
+```
+
+
+```{r Assign attributes}
+# Read SOC data
+atts_soc <- c("SOC_1", "SOC_2", "SOC_3", "SOC_4") # Order needs to be correct
+atts_phy <- c("PHY_1", "PHY_2", "PHY_3", "PHY_4")
+atts_dom <- c("F_EXP", "S_SOC", "S_PHY")
+
+atts_name_soc <- c("Population density", "Vulnerable Groups", "Facilities of social importance", "Land use")
+atts_name_phy <- c("Shelter type", "Critical Infrastructure", "Facilities physical vulnerability", "Roads / Transport")
+atts_name_dom <- c("Flood Exposure", "Social Susceptibility", "Physical Susceptibility")
+```
+
+```{r Use consistent filtered data}
+# SOC: ID 6
+data_SOC_filtered <- data_SOC[-c(2, 6), ]
+
+# PHY: ID 6 & ID 11
+data_PHY_filtered <- data_PHY[-c(6, 11), ]
+
+# DOM: ID 6 & ID 11
+data_DOM_filtered <- data_DOM[-c(6, 11), ]
+```
+
+# Fuzzy AHP 
+
+Check articles Laarhoven and Pedrycz (1983) and Chang (1996)
+
+Using the FuzzyAHP CRAN package
+
+"Fuzzy logic is a very useful tool to transform qualitative assessments of a human to quantitative assessment by taking uncertainty into account. In a simple Analytical hierarchy process model, a decision maker has to do a weight scaling by carrying out comparisons in pair for his criteria and alternatives. He has to enter a definite number for his preferences, but in real world situation, a decision maker is not sure about the numerical values (weights) he should assign for his preferences. Fuzzy Analytical hierarchical process takes the real world uncertainty into account." https://hemi1984.medium.com/a-fuzzy-analytical-hierarchy-process-fahp-using-r-64c4c5a13b69 
+
+The weights for criteria are, however, still determined from the pairwise comparison matrix. This approach towards AHP is common in Geosciences as well as other fields.
+
+```{r Call documentation FuzzyAHP}
+help(package="FuzzyAHP")
+```
+
+First, we have to construct a Fuzzy PCM based on the list of PCMs from the AHP ranking process. The FuzzyAHP packages includes a function which builds FPCMs based on AHP PCM inputs, resulting in Fuzzy Pairwise Comparison Matrix, calculated as minimum, geometric mean and maximum of each cell of all PCMs. 
+
+```{r Load AHP PCMs}
+pcm_soc <- data_SOC_filtered  %>% 
+  ahp.mat(atts_soc, negconvert = T)
+
+pcm_phy <- data_PHY_filtered %>% 
+  ahp.mat(atts_phy, negconvert = T)
+
+pcm_dom <- data_DOM_filtered %>%
+  ahp.mat(atts_dom, negconvert = T)
+```
+
+The comparison matrices are fuzzified with respect to the fuzzy scale. Default fuzzy scale ranging from 1 to 9 with width of fuzzy number equal to 2 is provided.
+
+```{r Fuzzification of PCMs: SOC}
+# SOC
+
+# Try with the first matrix in the list
+pcm_soc_mat_1 <- as.matrix(pcm_soc[[1]])
+
+comparisonMatrix <- pairwiseComparisonMatrix(pcm_soc_mat_1)
+
+fuzzyComparisonMatrix <- fuzzyPairwiseComparisonMatrix(comparisonMatrix)
+print(fuzzyComparisonMatrix)
+
+# Create an empty list to store the fuzzy matrices
+pcm_soc_fuzzy <- list()
+
+# Loop through all elements from pcm_soc (1-9)
+for (i in 1:9) {
+  # Convert the current element to a matrix
+  pcm_soc_mat <- as.matrix(pcm_soc[[i]])
+  
+  # Create a pairwise comparison matrix
+  comparisonMatrix_soc <- pairwiseComparisonMatrix(pcm_soc_mat)
+  
+  # Fuzzify the pairwise comparison matrix
+  fuzzyComparisonMatrix_soc <- fuzzyPairwiseComparisonMatrix(comparisonMatrix_soc)
+  
+  # Print the fuzzy comparison matrix
+  print(fuzzyComparisonMatrix_soc)
+  
+  # Store the fuzzy comparison matrix in the list
+  pcm_soc_fuzzy[[i]] <- fuzzyComparisonMatrix_soc
+}
+```
+
+```{r Fuzzification of PCMs: PHY}
+# PHY
+
+# Create an empty list to store the fuzzy matrices
+pcm_phy_fuzzy <- list()
+
+# Loop through all elements from pcm_phy (1-9)
+for (i in 1:9) {
+  # Convert the current element to a matrix
+  pcm_phy_mat <- as.matrix(pcm_phy[[i]])
+  
+  # Create a pairwise comparison matrix
+  comparisonMatrix_phy <- pairwiseComparisonMatrix(pcm_phy_mat)
+  
+  # Fuzzify the pairwise comparison matrix
+  fuzzyComparisonMatrix_phy <- fuzzyPairwiseComparisonMatrix(comparisonMatrix_phy)
+  
+  # Print the fuzzy comparison matrix
+  print(fuzzyComparisonMatrix_phy)
+  
+  # Store the fuzzy comparison matrix in the list
+  pcm_phy_fuzzy[[i]] <- fuzzyComparisonMatrix_phy
+}
+```
+
+```{r Fuzzification of PCMs: DOM}
+# DOM
+
+# Create an empty list to store the fuzzy matrices
+pcm_dom_fuzzy <- list()
+
+# Loop through all elements from pcm_soc (1-9)
+for (i in 1:9) {
+  # Convert the current element to a matrix
+  pcm_dom_mat <- as.matrix(pcm_dom[[i]])
+  
+  # Create a pairwise comparison matrix
+  comparisonMatrix_dom <- pairwiseComparisonMatrix(pcm_dom_mat)
+  
+  # Fuzzify the pairwise comparison matrix
+  fuzzyComparisonMatrix_dom <- fuzzyPairwiseComparisonMatrix(comparisonMatrix_dom)
+  
+  # Print the fuzzy comparison matrix
+  print(fuzzyComparisonMatrix_dom)
+  
+  # Store the fuzzy comparison matrix in the list
+  pcm_dom_fuzzy[[i]] <- fuzzyComparisonMatrix_dom
+}
+
+pcm_dom_fuzzy
+```
+
+```{r List PCMs for later fuzzification}
+# SOC
+# Create an empty list to store the pairwise comparison matrices
+pcm_soc_comparison_matrices <- list()
+
+# Loop through all elements from pcm_soc (1-9)
+for (i in 1:length(pcm_soc)) {
+  # Convert the current element to a matrix
+  pcm_soc_mat <- as.matrix(pcm_soc[[i]])
+  
+  # Create a pairwise comparison matrix
+  comparisonMatrix <- pairwiseComparisonMatrix(pcm_soc_mat)
+  
+  # Print the pairwise comparison matrix
+  # print(comparisonMatrix)
+  
+  # Store the pairwise comparison matrix in the list
+  pcm_soc_comparison_matrices[[i]] <- comparisonMatrix
+}
+
+# PHY
+# Create an empty list to store the pairwise comparison matrices
+pcm_phy_comparison_matrices <- list()
+
+# Loop through all elements from pcm_phy (1-9)
+for (i in 1:length(pcm_phy)) {
+  # Convert the current element to a matrix
+  pcm_phy_mat <- as.matrix(pcm_phy[[i]])
+  
+  # Create a pairwise comparison matrix
+  comparisonMatrix <- pairwiseComparisonMatrix(pcm_phy_mat)
+  
+  # Print the pairwise comparison matrix
+  # print(comparisonMatrix)
+  
+  # Store the pairwise comparison matrix in the list
+  pcm_phy_comparison_matrices[[i]] <- comparisonMatrix
+}
+  
+# DOM
+# Create an empty list to store the pairwise comparison matrices
+pcm_dom_comparison_matrices <- list()
+
+# Loop through all elements from pcm_dom (1-9)
+for (i in 1:length(pcm_dom)) {
+  # Convert the current element to a matrix
+  pcm_dom_mat <- as.matrix(pcm_dom[[i]])
+  
+  # Create a pairwise comparison matrix
+  comparisonMatrix <- pairwiseComparisonMatrix(pcm_dom_mat)
+  
+  # Print the pairwise comparison matrix
+  # print(comparisonMatrix)
+  
+  # Store the pairwise comparison matrix in the list
+  pcm_dom_comparison_matrices[[i]] <- comparisonMatrix
+}
+```
+
+This functions builds Fuzzy Pairwise Comparison Matrix based on list of Pairwise Comparison Matrices. The resulting Fuzzy Pairwise Comparison Matrix is calculated as minimum, geometric mean and maximum of each cell of all Pairwise Comparison Matrices in listOfMatrices.
+
+```{r Fuzzy PCMs}
+# SOC
+# Turn PCMs into Fuzzy PCMs
+fuzzy_soc <- buildFuzzyPairwiseComparisonMatrix(pcm_soc_comparison_matrices)
+
+# PHY
+# Turn PCMs into Fuzzy PCMs
+fuzzy_phy <- buildFuzzyPairwiseComparisonMatrix(pcm_phy_comparison_matrices)
+
+# DOM
+# Turn PCMs into Fuzzy PCMs
+fuzzy_dom <- buildFuzzyPairwiseComparisonMatrix(pcm_dom_comparison_matrices)
+```
+
+```{r Fuzzy PCM aggregated weights}
+#SOC
+# Calculate the weights of the fuzzy PCMs 
+w_fuzzy_soc <- calculateWeights(fuzzy_soc)
+# Calculate final fuzzy weight vector based on Chang (1996) to get the aggregated fuzzy weights including uncertainty in ranking process
+calculate_weighting_vector(w_fuzzy_soc)
+
+# PHY
+# Calculate the weights of the fuzzy PCMs 
+w_fuzzy_phy <- calculateWeights(fuzzy_phy)
+# Calculate final fuzzy weight vector based on Chang (1996) to get the aggregated fuzzy weights including uncertainty in ranking process
+calculate_weighting_vector(w_fuzzy_phy)
+
+# DOM
+# Calculate the weights of the fuzzy PCMs 
+w_fuzzy_dom <- calculateWeights(fuzzy_dom)
+# Calculate final fuzzy weight vector based on Chang (1996) to get the aggregated fuzzy weights including uncertainty in ranking process
+agg_fuzz_w_dom <- calculate_weighting_vector(w_fuzzy_dom)
+print("Aggregated Fuzzy weights - Vulnerability Domain:")
+print(agg_fuzz_w_dom)
+```
+### ----
+
+# Calculation of Fuzzy weights based on the procedure proposed by Al Fozaie (2022)
+
+Apply Buckley’s geomean method to calculate the fuzzy weights. This involves multiplying the ﬁrst value of the triangular fuzzy scale of each column with one another to the root of 1/n, where n is the number of variables, and a is the ﬁrst integer corresponding to the triangular fuzzy value set a1, a2, a3 of proxy i; i.e., ri = [ai1 × ai2 × . . . × ain]1/n. Then the geomean is utilized to aggregate the values of these columns.
+
+
+```{r Testing prodecure for a single FPCM}
+
+# Start with testing this for the first FPCM of phy
+
+# Define a function to calculate ri values for a given slot
+calculate_ri <- function(slot_matrix, variable_names) {
+  # Get the number of rows in the matrix
+  n_rows <- nrow(slot_matrix)
+  
+  # Calculate the product of values for each row
+  product_values <- apply(slot_matrix, 1, prod)
+  
+  # Calculate the root of 1/n
+  root <- 1 / n_rows
+  
+  # Calculate ri for each row
+  ri_values <- product_values ^ root
+  
+  # Create a data frame to store variable names and ri values
+  ri_df <- data.frame(variable = variable_names, ri = ri_values)
+  
+  return(ri_df)
+}
+
+print(class(pcm_phy_fuzzy[[1]]))
+print(pcm_phy_fuzzy[[1]])
+
+# Get variable names
+variable_names <- pcm_phy_fuzzy[[1]]@variableNames
+
+# Calculate ri values for each slot
+ri_fnMin <- calculate_ri(pcm_phy_fuzzy[[1]]@fnMin, variable_names)
+ri_fnModal <- calculate_ri(pcm_phy_fuzzy[[1]]@fnModal, variable_names)
+ri_fnMax <- calculate_ri(pcm_phy_fuzzy[[1]]@fnMax, variable_names)
+
+# Merge ri values for fnMin, fnModal, and fnMax after the variable name
+ri_merged <- merge(ri_fnMin, ri_fnModal, by = "variable")
+ri_merged <- merge(ri_merged, ri_fnMax, by = "variable")
+
+# Rename the ri values to rMin, rModal, and rMax
+colnames(ri_merged) <- c("variable", "rMin", "rModal", "rMax")
+
+# Display the merged ri values
+print(ri_merged)
+
+# Calculate the geometric mean of rMin, rModal, and rMax for each variable
+ri_merged$geomean_ri <- apply(ri_merged[, -1], 1, function(x) exp(mean(log(x))))
+
+# Display the updated dataframe
+print(ri_merged)
+
+kable(ri_merged) %>% kable_styling()
+```
+The next step is to calculate the fuzzy weights wi. In order to calculate the fuzzy weights, the researcher needs to calculate the sum of each column ri, and then multiply the inverse of ri to the value 
+
+```{r Calculate fuzzy weight of test PCM}
+# Calculate the sum of each ri column (rMin, rModal, rMax)
+column_sums <- colSums(ri_merged[, c("rMin", "rModal", "rMax")])
+
+# Display the column sums
+print(column_sums)
+
+# Calculate the inverse of the sum of each ri column (rMin, rModal, rMax)
+inverse_sum <- 1 / column_sums
+
+# Swap the positions of rMin and rMax in the inverse_sum vector
+inverse_sum <- c(inverse_sum[3], inverse_sum[2], inverse_sum[1])
+
+# Change variable names from "rMax" to "rMin" and vice versa
+names(inverse_sum) <- c("rMin", "rModal", "rMax")
+
+# Display the updated inverse_sum vector
+print(inverse_sum)
+```
+
+```{r Fuzzy weights caculation for test PCM}
+# Initialize an empty data frame to store the fuzzy weights
+fuzzy_weights <- data.frame(variable = character(), wMin = numeric(), wModal = numeric(), wMax = numeric(), stringsAsFactors = FALSE)
+
+# Define ri_cols variable to reference the columns in ri_merged corresponding to rMin, rModal, and rMax
+ri_cols <- c("rMin", "rModal", "rMax")
+
+# Calculate the fuzzy weights w for each variable
+for (i in 1:nrow(ri_merged)) {
+  row <- c(ri_merged[i, "variable"])
+  for (j in 1:length(ri_cols)) {
+    ri_value <- ri_merged[i, ri_cols[j]]
+    inverse_sum_value <- inverse_sum[j]
+    w_value <- round(inverse_sum_value * ri_value, 3)  # Round to 3 decimals
+    row <- c(row, w_value)
+  }
+  # Append the row to the fuzzy weights data frame
+  fuzzy_weights <- rbind(fuzzy_weights, row)
+}
+
+# Rename the columns
+colnames(fuzzy_weights) <- c("variable", "wMin", "wModal", "wMax")
+
+# Convert the fuzzy weights columns to numeric
+fuzzy_weights[, 2:4] <- sapply(fuzzy_weights[, 2:4], as.numeric)
+
+# Calculate the average of each row
+fuzzy_weights$Defuzzified_w <- round(rowMeans(fuzzy_weights[, 2:4], na.rm = TRUE), 4)
+# Calculate the average of each row
+fuzzy_weights$Defuzzified_w_2 <- round((rowSums(fuzzy_weights[, 2:4], na.rm = TRUE) / 3), 4)
+
+# ---
+
+# Normalize defuzzified weights 
+
+# Calculate the sum of defuzzified weights
+sum_defuzzified <- sum(fuzzy_weights$Defuzzified_w)
+
+# Normalize the defuzzified weights
+fuzzy_weights$norm_defuzzified_w <- fuzzy_weights$Defuzzified_w / sum_defuzzified
+
+# Display the updated fuzzy weights data frame
+print(fuzzy_weights)
+
+kable(fuzzy_weights) %>% kable_styling()
+```
+
+We are left with three columns that represent the fuzzy weights of the triangular fuzzy sets of the indicators.
+
+The last step in the FAHP method is to defuzzy or normalize the weights. This includes calculating the average of the fuzzy weights for each proxy, i.e., defuzziﬁed. The
+defuzziﬁed weights are the ﬁnal weights to be applied to the composite index after being subjected to the FAHP method.
+
+# Looping this process to have all FPCMs of all experts
+
+## SOC
+
+```{r Fuzzy individual w: SOC}
+# Initialize an empty list to store the results for each instance
+results_list_soc <- list()
+
+# Get variable names
+variable_names <- pcm_soc_fuzzy[[1]]@variableNames
+
+# Iterate over each instance in pcm_soc_fuzzy
+for (instance_index in seq_along(pcm_soc_fuzzy)) {
+  # Calculate ri values for each slot
+  ri_fnMin <- calculate_ri(pcm_soc_fuzzy[[instance_index]]@fnMin, variable_names)
+  ri_fnModal <- calculate_ri(pcm_soc_fuzzy[[instance_index]]@fnModal, variable_names)
+  ri_fnMax <- calculate_ri(pcm_soc_fuzzy[[instance_index]]@fnMax, variable_names)
+  
+  # Merge ri values for fnMin, fnModal, and fnMax after the variable name
+  ri_merged <- merge(ri_fnMin, ri_fnModal, by = "variable")
+  ri_merged <- merge(ri_merged, ri_fnMax, by = "variable")
+  
+  # Rename the ri values to rMin, rModal, and rMax
+  colnames(ri_merged) <- c("indicator", "rMin", "rModal", "rMax")
+  
+  # Calculate the geometric mean of rMin, rModal, and rMax for each variable
+  ri_merged$geomean_ri <- apply(ri_merged[, -1], 1, function(x) exp(mean(log(x))))
+  
+  # Calculate the sum of each ri column (rMin, rModal, rMax)
+  column_sums <- colSums(ri_merged[, c("rMin", "rModal", "rMax")])
+  
+  # Calculate the inverse of the sum of each ri column (rMin, rModal, rMax)
+  inverse_sum <- 1 / column_sums
+  
+  # Swap the positions of rMin and rMax in the inverse_sum vector
+  inverse_sum <- c(inverse_sum[3], inverse_sum[2], inverse_sum[1])
+  
+  # Change variable names from "rMax" to "rMin" and vice versa
+  names(inverse_sum) <- c("rMin", "rModal", "rMax")
+  
+  # Initialize an empty data frame to store the fuzzy weights
+  fuzzy_weights <- data.frame(indicator = character(), wMin = numeric(), wModal = numeric(), wMax = numeric(), stringsAsFactors = FALSE)
+  
+  # Calculate the fuzzy weights w for each indicator
+  for (i in 1:nrow(ri_merged)) {
+    row <- c(ri_merged[i, "indicator"])
+    for (j in 1:length(ri_cols)) {
+      ri_value <- ri_merged[i, ri_cols[j]]
+      inverse_sum_value <- inverse_sum[j]
+      w_value <- round(inverse_sum_value * ri_value, 3)  # Round to 3 decimals
+      row <- c(row, w_value)
+    }
+    # Append the row to the fuzzy weights data frame
+    fuzzy_weights <- rbind(fuzzy_weights, row)
+  }
+  
+  # Rename the columns
+  colnames(fuzzy_weights) <- c("indicator", "wMin", "wModal", "wMax")
+  
+  # Convert the fuzzy weights columns to numeric
+  fuzzy_weights[, 2:4] <- sapply(fuzzy_weights[, 2:4], as.numeric)
+  
+  # Calculate the average of each row
+  fuzzy_weights$Defuzzified_w <- round(rowMeans(fuzzy_weights[, 2:4], na.rm = TRUE), 4)
+  
+  # Store the results for this instance
+  results_list_soc[[instance_index]] <- fuzzy_weights
+}
+
+# Display the results for each instance
+for (i in seq_along(results_list_soc)) {
+  cat("Results for instance", i, ":\n")
+  print(results_list_soc[[i]])
+  cat("\n")
+}
+```
+
+Aggregated fuzzy weights: Now, calculating arithmetic mean over all the instances / FPCMs to get the the aggregated fuzzy weights
+
+```{r Agggregated fuzzy weights SOC}
+# Create an empty list to store the aggregated results
+aggregated_results_soc <- list()
+
+# Calculate the arithmetic mean for each column across all instances
+for (col_name in c("wMin", "wModal", "wMax", "Defuzzified_w")) {
+  # Extract the column values for all instances
+  col_values <- sapply(results_list_soc, function(df) df[[col_name]])
+  
+  # Calculate the mean for each column
+  mean_values <- round(rowMeans(col_values, na.rm = TRUE), 4)
+  
+  # Normalize the Defuzzified_w values to sum up to 1
+  if (col_name == "Defuzzified_w") {
+    normalized_values <- mean_values / sum(mean_values)
+  } else {
+    normalized_values <- mean_values
+  }
+  
+  # Store the normalized values in the aggregated_results list
+  aggregated_results_soc[[col_name]] <- mean_values
+}
+
+# Combine the mean values into a data frame
+fuzzy_aggregated_soc <- data.frame(
+  indicator = results_list_soc[[1]]$indicator, # Assuming all instances have the same indicators
+  wMin = aggregated_results_soc[["wMin"]],
+  wModal = aggregated_results_soc[["wModal"]],
+  wMax = aggregated_results_soc[["wMax"]],
+  Defuzzified_w = aggregated_results_soc[["Defuzzified_w"]],
+  Norm_Defuzzified_w = round(normalized_values, 4)  # Add the normalized Defuzzified_w column
+)
+
+# Display the aggregated dataframe
+print(fuzzy_aggregated_soc)
+
+kable(fuzzy_aggregated_soc) %>% kable_styling()
+```
+
+## PHY
+
+```{r Fuzzy individual w: PHY}
+# Initialize an empty list to store the results for each instance
+results_list_phy <- list()
+
+# Get variable names
+variable_names <- pcm_phy_fuzzy[[1]]@variableNames
+
+# Iterate over each instance in pcm_phy_fuzzy
+for (instance_index in seq_along(pcm_phy_fuzzy)) {
+  # Calculate ri values for each slot
+  ri_fnMin <- calculate_ri(pcm_phy_fuzzy[[instance_index]]@fnMin, variable_names)
+  ri_fnModal <- calculate_ri(pcm_phy_fuzzy[[instance_index]]@fnModal, variable_names)
+  ri_fnMax <- calculate_ri(pcm_phy_fuzzy[[instance_index]]@fnMax, variable_names)
+  
+  # Merge ri values for fnMin, fnModal, and fnMax after the variable name
+  ri_merged <- merge(ri_fnMin, ri_fnModal, by = "variable")
+  ri_merged <- merge(ri_merged, ri_fnMax, by = "variable")
+  
+  # Rename the ri values to rMin, rModal, and rMax
+  colnames(ri_merged) <- c("indicator", "rMin", "rModal", "rMax")
+  
+  # Calculate the geometric mean of rMin, rModal, and rMax for each variable
+  ri_merged$geomean_ri <- apply(ri_merged[, -1], 1, function(x) exp(mean(log(x))))
+  
+  # Calculate the sum of each ri column (rMin, rModal, rMax)
+  column_sums <- colSums(ri_merged[, c("rMin", "rModal", "rMax")])
+  
+  # Calculate the inverse of the sum of each ri column (rMin, rModal, rMax)
+  inverse_sum <- 1 / column_sums
+  
+  # Swap the positions of rMin and rMax in the inverse_sum vector
+  inverse_sum <- c(inverse_sum[3], inverse_sum[2], inverse_sum[1])
+  
+  # Change variable names from "rMax" to "rMin" and vice versa
+  names(inverse_sum) <- c("rMin", "rModal", "rMax")
+  
+  # Initialize an empty data frame to store the fuzzy weights
+  fuzzy_weights <- data.frame(indicator = character(), wMin = numeric(), wModal = numeric(), wMax = numeric(), stringsAsFactors = FALSE)
+  
+  # Calculate the fuzzy weights w for each variable
+  for (i in 1:nrow(ri_merged)) {
+    row <- c(ri_merged[i, "indicator"])
+    for (j in 1:length(ri_cols)) {
+      ri_value <- ri_merged[i, ri_cols[j]]
+      inverse_sum_value <- inverse_sum[j]
+      w_value <- round(inverse_sum_value * ri_value, 3)  # Round to 3 decimals
+      row <- c(row, w_value)
+    }
+    # Append the row to the fuzzy weights data frame
+    fuzzy_weights <- rbind(fuzzy_weights, row)
+  }
+  
+  # Rename the columns
+  colnames(fuzzy_weights) <- c("indicator", "wMin", "wModal", "wMax")
+  
+  # Convert the fuzzy weights columns to numeric
+  fuzzy_weights[, 2:4] <- sapply(fuzzy_weights[, 2:4], as.numeric)
+  
+  # Calculate the average of each row
+  fuzzy_weights$Defuzzified_w <- round(rowMeans(fuzzy_weights[, 2:4], na.rm = TRUE), 4)
+  
+  # Store the results for this instance
+  results_list_phy[[instance_index]] <- fuzzy_weights
+}
+
+# Display the results for each instance
+for (i in seq_along(results_list_phy)) {
+  cat("Results for instance", i, ":\n")
+  print(results_list_phy[[i]])
+  cat("\n")
+}
+```
+```{r Agggregated fuzzy weights PHY}
+# Create an empty list to store the aggregated results
+aggregated_results_phy <- list()
+
+# Calculate the arithmetic mean for each column across all instances
+for (col_name in c("wMin", "wModal", "wMax", "Defuzzified_w")) {
+  # Extract the column values for all instances
+  col_values <- sapply(results_list_phy, function(df) df[[col_name]])
+  
+  # Calculate the mean for each column
+  mean_values <- round(rowMeans(col_values, na.rm = TRUE), 4)
+  
+  # Normalize the Defuzzified_w values to sum up to 1
+  if (col_name == "Defuzzified_w") {
+    normalized_values <- mean_values / sum(mean_values)
+  } else {
+    normalized_values <- mean_values
+  }
+  
+  # Store the normalized values in the aggregated_results list
+  aggregated_results_phy[[col_name]] <- mean_values
+}
+
+# Combine the mean values into a data frame
+fuzzy_aggregated_phy <- data.frame(
+  indicator = results_list_phy[[1]]$indicator, # Assuming all instances have the same indicators
+  wMin = aggregated_results_phy[["wMin"]],
+  wModal = aggregated_results_phy[["wModal"]],
+  wMax = aggregated_results_phy[["wMax"]],
+  Defuzzified_w = aggregated_results_phy[["Defuzzified_w"]],
+  Norm_Defuzzified_w = round(normalized_values, 4)  # Add the normalized Defuzzified_w column
+)
+
+# Display the aggregated dataframe
+print(fuzzy_aggregated_phy)
+
+kable(fuzzy_aggregated_phy) %>% kable_styling()
+```
+
+## DOM
+
+```{r DOM test}
+
+# Start with testing this for the first FPCM of dom
+
+# Define a function to calculate ri values for a given slot
+calculate_ri <- function(slot_matrix, variable_names) {
+  # Get the number of rows in the matrix
+  n_rows <- nrow(slot_matrix)
+  
+  # Calculate the product of values for each row
+  product_values <- apply(slot_matrix, 1, prod)
+  
+  # Calculate the root of 1/n
+  root <- 1 / n_rows
+  
+  # Calculate ri for each row
+  ri_values <- product_values ^ root
+  
+  # Create a data frame to store variable names and ri values
+  ri_df <- data.frame(variable = variable_names, ri = ri_values)
+  
+  return(ri_df)
+}
+
+# Get variable names
+variable_names <- pcm_dom_fuzzy[[1]]@variableNames
+
+# Calculate ri values for each slot
+ri_fnMin <- calculate_ri(pcm_dom_fuzzy[[1]]@fnMin, variable_names)
+ri_fnModal <- calculate_ri(pcm_dom_fuzzy[[1]]@fnModal, variable_names)
+ri_fnMax <- calculate_ri(pcm_dom_fuzzy[[1]]@fnMax, variable_names)
+
+# Merge ri values for fnMin, fnModal, and fnMax after the variable name
+ri_merged <- merge(ri_fnMin, ri_fnModal, by = "variable")
+ri_merged <- merge(ri_merged, ri_fnMax, by = "variable")
+
+# Rename the ri values to rMin, rModal, and rMax
+colnames(ri_merged) <- c("indicator", "rMin", "rModal", "rMax")
+
+# Display the merged ri values
+print(ri_merged)
+
+# Calculate the geometric mean of rMin, rModal, and rMax for each variable
+ri_merged$geomean_ri <- apply(ri_merged[, -1], 1, function(x) exp(mean(log(x))))
+
+# Display the updated dataframe
+print(ri_merged)
+
+kable(ri_merged) %>% kable_styling()
+```
+
+
+```{r Fuzzy individual w: DOM}
+# Initialize an empty list to store the results for each instance
+results_list_dom <- list()
+
+# Iterate over each instance in pcm_dom_fuzzy
+for (instance_index in seq_along(pcm_dom_fuzzy)) {
+  # Calculate ri values for each slot
+  ri_fnMin <- calculate_ri(pcm_dom_fuzzy[[instance_index]]@fnMin, variable_names)
+  ri_fnModal <- calculate_ri(pcm_dom_fuzzy[[instance_index]]@fnModal, variable_names)
+  ri_fnMax <- calculate_ri(pcm_dom_fuzzy[[instance_index]]@fnMax, variable_names)
+  
+  # Merge ri values for fnMin, fnModal, and fnMax after the variable name
+  ri_merged <- merge(ri_fnMin, ri_fnModal, by = "variable")
+  ri_merged <- merge(ri_merged, ri_fnMax, by = "variable")
+  
+  # Rename the ri values to rMin, rModal, and rMax
+  colnames(ri_merged) <- c("indicator", "rMin", "rModal", "rMax")
+  
+  # Normalize the modal values
+  ri_merged$rModal <- ri_merged$rModal / sum(ri_merged$rModal)
+  
+  # Calculate the geometric mean of rMin, rModal, and rMax for each variable
+  ri_merged$geomean_ri <- apply(ri_merged[, -1], 1, function(x) exp(mean(log(x))))
+  
+  # Calculate the sum of each ri column (rMin, rModal, rMax)
+  column_sums <- colSums(ri_merged[, c("rMin", "rModal", "rMax")])
+  
+  # Calculate the inverse of the sum of each ri column (rMin, rModal, rMax)
+  inverse_sum <- 1 / column_sums
+  
+  # Swap the positions of rMin and rMax in the inverse_sum vector
+  inverse_sum <- c(inverse_sum[3], inverse_sum[2], inverse_sum[1])
+  
+  # Change variable names from "rMax" to "rMin" and vice versa
+  names(inverse_sum) <- c("rMin", "rModal", "rMax")
+  
+  # Initialize an empty data frame to store the fuzzy weights
+  fuzzy_weights <- data.frame(indicator = character(), wMin = numeric(), wModal = numeric(), wMax = numeric(), stringsAsFactors = FALSE)
+  
+  # Calculate the fuzzy weights w for each variable
+  for (i in 1:nrow(ri_merged)) {
+    row <- c(ri_merged[i, "indicator"])
+    for (j in 1:length(ri_cols)) {
+      ri_value <- ri_merged[i, ri_cols[j]]
+      inverse_sum_value <- inverse_sum[j]
+      w_value <- round(inverse_sum_value * ri_value, 3)  # Round to 3 decimals
+      row <- c(row, w_value)
+    }
+    # Append the row to the fuzzy weights data frame
+    fuzzy_weights <- rbind(fuzzy_weights, row)
+  }
+  
+  # Rename the columns
+  colnames(fuzzy_weights) <- c("indicator", "wMin", "wModal", "wMax")
+  
+  # Convert the fuzzy weights columns to numeric
+  fuzzy_weights[, 2:4] <- sapply(fuzzy_weights[, 2:4], as.numeric)
+  
+  # Calculate the average of each row
+  fuzzy_weights$Defuzzified_w <- round(rowMeans(fuzzy_weights[, 2:4], na.rm = TRUE), 4)
+  
+  # Store the results for this instance
+  results_list_dom[[instance_index]] <- fuzzy_weights
+}
+
+# Display the results for each instance
+for (i in seq_along(results_list_dom)) {
+  cat("Results for instance", i, ":\n")
+  print(results_list_dom[[i]])
+  cat("\n")
+}
+```
+
+```{r Agggregated fuzzy weights DOM}
+# Create an empty list to store the aggregated results
+aggregated_results_dom <- list()
+
+# Calculate the arithmetic mean for each column across all instances
+for (col_name in c("wMin", "wModal", "wMax", "Defuzzified_w")) {
+  # Extract the column values for all instances
+  col_values <- sapply(results_list_dom, function(df) df[[col_name]])
+  
+  # Calculate the mean for each column
+  mean_values <- round(rowMeans(col_values, na.rm = TRUE), 4)
+  
+  # Normalize the Defuzzified_w values to sum up to 1
+  if (col_name == "Defuzzified_w") {
+    normalized_values <- mean_values / sum(mean_values)
+  } else {
+    normalized_values <- mean_values
+  }
+  
+  # Store the normalized values in the aggregated_results list
+  aggregated_results_dom[[col_name]] <- mean_values
+}
+
+# Combine the mean values into a data frame
+fuzzy_aggregated_dom <- data.frame(
+  indicator = results_list_dom[[1]]$indicator, # Assuming all instances have the same indicators
+  wMin = aggregated_results_dom[["wMin"]],
+  wModal = aggregated_results_dom[["wModal"]],
+  wMax = aggregated_results_dom[["wMax"]],
+  Defuzzified_w = aggregated_results_dom[["Defuzzified_w"]],
+  Norm_Defuzzified_w = round(normalized_values, 4)  # Add the normalized Defuzzified_w column
+)
+
+# Display the aggregated dataframe
+print(fuzzy_aggregated_dom)
+
+kable(fuzzy_aggregated_dom) %>% kable_styling()
+```
+
+
+```{r Visualize fuzzy weights distribution}
+# Plot the interval
+f_soc_plt <- ggplot(fuzzy_aggregated_soc, aes(x = indicator)) +
+  geom_errorbar(aes(ymin = wMin, ymax = wMax, color = "Interval"), width = 0.2, show.legend = TRUE, color = "#808080") +  # Plot intervals as error bars
+  geom_point(aes(y = wModal, color = "Modal"), size = 3, show.legend = TRUE, shape = 10) +  # Plot modal values as points
+  geom_point(aes(y = Defuzzified_w, color = "Defuzzified"), size = 3, show.legend = TRUE, shape = 10) +  # Plot defuzzified values as points
+  labs(title = "", subtitle = "SOC Indicators",
+       x = "",
+       y = "Relative Weight",
+       color = "Aggregated fuzzy weight:") +  
+  scale_color_manual(values = c("#3366FF", "#33CC33"), labels = c("wModal", "wDefuzzified")) +  # Set color legend labels
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "bottom") +  # Rotate x-axis labels for better readability 
+  scale_x_discrete(labels = c("SOC1", "SOC2", "SOC3", "SOC4")) +  # Change x-axis labels
+  ylim(0.0, 0.61)  # Set y-axis limits
+
+f_soc_plt
+
+# Plot the interval
+f_phy_plt <- ggplot(fuzzy_aggregated_phy, aes(x = indicator)) +
+  geom_errorbar(aes(ymin = wMin, ymax = wMax, color = "Interval"), width = 0.2, show.legend = TRUE, color = "#808080") +  # Plot intervals as error bars
+  geom_point(aes(y = wModal, color = "Modal"), size = 3, show.legend = TRUE, shape = 10) +  # Plot modal values as points
+  geom_point(aes(y = Defuzzified_w, color = "Defuzzified"), size = 3, show.legend = TRUE, shape = 10) +  # Plot defuzzified values as points
+  labs(title = "", subtitle = "PHY Indicators",
+       x = "",
+       y = "",
+       color = "Aggregated fuzzy weight:") +  
+  scale_color_manual(values = c("#3366FF", "#33CC33"), labels = c("wModal", "wDefuzzified")) +  # Set color legend labels
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "bottom") +  # Rotate x-axis labels for better readability
+  scale_x_discrete(labels = c("PHY1", "PHY2", "PHY3", "PHY4")) +  # Change x-axis labels
+  ylim(0.0, 0.6)  # Set y-axis limits
+
+f_phy_plt
+
+# Plot the interval
+f_dom_plt <- ggplot(fuzzy_aggregated_dom, aes(x = indicator)) +
+  geom_errorbar(aes(ymin = wMin, ymax = wMax, color = "Interval"), width = 0.2, show.legend = TRUE, color = "#808080") +  # Plot intervals as error bars
+  geom_point(aes(y = wModal, color = "Modal"), size = 3, show.legend = TRUE, shape = 10) +  # Plot modal values as points
+  geom_point(aes(y = Defuzzified_w, color = "Defuzzified"), size = 3, show.legend = TRUE, shape = 10) +  # Plot defuzzified values as points
+  labs(title = "Fuzzy Weight Distribution for Vulnerability Indicators",
+       x = "",
+       y = "Relative Weight",
+       color = "Aggregated fuzzy weight:") +  
+  scale_color_manual(values = c("#3366FF", "#33CC33"), labels = c("wModal", "wDefuzzified")) +  # Set color legend labels
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "top")  # Rotate x-axis labels for better readability
+
+f_dom_plt
+```
+```{r save plots}
+# Save plots to the "results" folder
+ggsave(file.path(resultsFolder, "fahp/f_w_soc.png"), f_soc_plt , width = 12, height = 4)
+ggsave(file.path(resultsFolder, "fahp/f_w_phy.png"), f_phy_plt, width = 12, height = 4)
+
+# Arrange the two plots vertically
+f_w <- grid.arrange(f_soc_plt, f_phy_plt, ncol = 2)
+
+ggsave(file.path(resultsFolder, "fahp/f_w.png"), f_w, width = 10, height = 5)
+```
+

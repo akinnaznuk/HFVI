@@ -1,0 +1,2697 @@
+---
+title: "HFVI calculation"
+author: ""
+date: "2024-01-11"
+output:
+  html_document: default
+  word_document: default
+---
+
+This code runs the calculation of the HFVI, demonstrating the implementation of the HFVI using geo-spatial data. Global and local data are used as inputs for the individual vulnerability indicators. As the local datasets, originally used for the case study implementation of this the study, can not be published due to data sensitivity, synthetic data was generated for all local datasets based on an imaginary refugee camp located in Rwanda in order to showcase the workflow and performance of the HFVI, ensuring reproducibility. 
+
+Syntehtic local datasets and open source global datasets are used as inputs to create the individual indicators raster layer for subsequent spatial overlay, using the HFVI equation with the FAHP weights (obtained from running AHP.Rmd and FAHP.Rmd). Further spatial analysis (spatial autocorrelation and indicator correlation matrix) is performed followed by sensitivity and uncertainty analysis with the implementation of the FAHP-OAT Method (using the fuzzy ranges from the FAHP.Rmd file). Finally, visualization of the HFVI and uncertainty maps is performed.
+
+This code can be adjusted for other case studies, changing the input data for the individual indicator layers based on the refugee camp under consideraton. 
+
+# Load Libraries
+
+```{r setup, include=FALSE, warning = F}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
+
+# Install/load packages
+## Default repository
+local({r <- getOption("repos")
+       r["CRAN"] <- "http://cran.r-project.org" 
+       options(repos = r)
+})
+
+check_pkg <- function(x)
+  {
+    if (!require(x, character.only = TRUE))
+    {
+      install.packages(x, dep = TRUE)
+        if(!require(x, character.only = TRUE)) stop("Package not found")
+    }
+}
+
+check_pkg("sf")
+check_pkg("httr")
+check_pkg("rgdal")
+check_pkg("ggplot2")
+check_pkg("plotly")
+check_pkg("tidyverse")
+check_pkg("leaflet")
+check_pkg("dplyr")
+check_pkg("XML")
+check_pkg("mapview")
+check_pkg("lubridate")
+check_pkg("dplyr")
+check_pkg("readr") 
+check_pkg("tmap")
+check_pkg("spatstat") 
+check_pkg("devtools")
+check_pkg("stringr")
+check_pkg("zoo")
+check_pkg("RColorBrewer")
+check_pkg("spatstat")
+check_pkg("here")
+check_pkg("maptools")
+check_pkg("arrow") #feather.R
+check_pkg("raster")
+check_pkg("terra")
+check_pkg("tmaptools")
+check_pkg("stars")
+check_pkg("gridExtra")
+check_pkg("spatialEco")
+check_pkg("corrplot")
+check_pkg("ggpattern")
+check_pkg("fs")
+check_pkg("fsr")
+
+# Install SpatMCDA from GitHub
+library(devtools)
+devtools::install_github('Neaop/SpatMCDA', build_vignettes = TRUE)
+library(SpatMCDA)
+```
+
+```{r Projections}
+# Projection strings for WGS84 CRS and local projection, respectively. 
+crs_wgs84 <- 4326
+crs_utm <- 32736 # UTM zone 36S EPSG:32736 <-- adjust to refugee camp location if needed. 
+```
+
+# Initialization of project paths
+```{r init_paths, warning = FALSE, message = FALSE, fig.align = "center"}
+library(here)
+here::i_am("scripts/HFVI_calculation.Rmd")
+knitr::opts_knit$set(root.dir = here::here())
+
+# Define relative paths to directories
+dataFolder <- here::here("data")                        # Root data folder
+ahpFolder <- here::here("data", "ahp")                  # AHP data subfolder
+shpGlobalFolder <- here::here("data", "shp", "global")  # Global shapefiles folder
+shpLocalFolder <- here::here("data", "shp", "local")    # Local shapefiles folder
+outputFolder <- here::here("outputs")                   # Outputs folder
+oatFolder <- file.path(outputFolder, "oat")
+figureFolder <- here::here("outputs", "figures")        # Figures folder
+resultsFolder <- file.path(outputFolder, "results")  # Path to results folder
+macrFolder <- file.path(resultsFolder, "macr")  # Path to MACR folder
+```
+
+# Read Data
+##  Global datasets
+```{r Load open source global data}
+
+# Run this for the demonstration of the code using the extracts provided for the fictional camp. For the google buidlings, we provided an extract which is already intersected with the camp boundary due to long run times when loading the whole Google buildings dataset. When implementing another refugee camp, load the full dataset as described in the ReadMe file
+
+# OSM roads extract
+
+# Load global shapefiles
+data_osm_roads <- st_read(file.path(shpGlobalFolder, "osm_roads/gis_osm_roads_free_1.shp")) %>%
+  st_set_crs(crs_wgs84) %>%  # Assign EPSG:4326
+  st_transform(crs = crs_utm)  # Transform to UTM Zone 
+
+# Google Buildings extract
+
+# Read created camp buidlings intersection shapefile 
+camp_buildings <- st_read(file.path(shpGlobalFolder, "google_buildings/camp_buildings_cut.shp")) %>%
+  st_transform(crs = crs_utm)
+```
+
+In case no local data is available for the land use / land cover indicator use global dataset downloaded from here:
+https://storage.googleapis.com/earthenginepartners-hansen/GLCLU2000-2020/v2/download.html 
+
+```{r Global land cover data}
+
+# If local land cover data is available from camp layout maps. Otherwise load global land over data 30-m spatial resultion: # https://glad.umd.edu/dataset/GLCLUC2020 
+
+# # Example: Load landuse geotif
+
+# GLCLUC2020 <- raster("./data/land_use/00N_030E.tif") # Download needed map extent for given camp
+# 
+# # Define target projection (WGS 84 / UTM zone 36S)
+# target_crs <- crs("+proj=utm +zone=36 +south +datum=WGS84 +units=m +no_defs")
+# 
+# GLCLUC2020_projected <- projectRaster(GLCLUC2020, crs = target_crs)
+```
+
+## Local datasets
+```{r Load synthetic local data}
+# Replace local data with context / location specific data of the refugee camp under evaluation
+
+# Read camp boundary
+camp_boundary <- read_sf(file.path(shpLocalFolder, "syn_camp_boundary", "boundary.s.shp")) %>%
+  st_transform(crs = crs_utm)
+
+# Read facilities
+camp_facilities <- read_sf(file.path(shpLocalFolder, "syn_facilities", "syn_facilities.shp")) %>%
+  st_transform(crs = crs_utm)
+
+# Read critical infrastructure
+camp_ci <- read_sf(file.path(shpLocalFolder, "syn_ci", "syn_ci.shp")) %>%
+  st_transform(crs = crs_utm)
+
+# Read critical infrastructure: drainage
+camp_drainage <- read_sf(file.path(shpLocalFolder, "syn_ci", "syn_drainage.shp")) %>%
+  st_transform(crs = crs_utm)
+
+# Read shelter type
+camp_shelter_type <- read_sf(file.path(shpLocalFolder, "syn_shelter_type", "syn_shelter_type.shp")) %>%
+  st_transform(crs = crs_utm)
+
+# Read vulnerable groups
+camp_vul_groups <- read_sf(file.path(shpLocalFolder, "syn_vul_groups", "syn_vul_groups.shp")) %>%
+  st_transform(crs = crs_utm)
+
+# Read land use
+camp_land_use <- read_sf(file.path(shpLocalFolder, "syn_land_use", "syn_land_use.shp")) %>%
+  st_transform(crs = crs_utm)
+```
+
+```{r Intersect data with camp boundary}
+camp_roads <- st_intersection(data_osm_roads, camp_boundary)
+camp_buildings <- st_intersection(camp_buildings, camp_boundary)
+camp_facilities <- st_intersection(camp_facilities, camp_boundary)
+camp_shelter_type <- st_intersection(camp_shelter_type, camp_boundary)
+camp_vul_groups <- st_intersection(camp_vul_groups, camp_boundary)
+camp_ci <- st_intersection(camp_ci, camp_boundary)
+camp_drainage <- st_intersection(camp_drainage, camp_boundary)
+camp_land_use <- st_intersection(camp_land_use, camp_boundary)
+```
+
+```{r Plot data}
+tmap_mode("plot")
+
+# Create a tmap object with multiple layers
+tm_syn_camp <- tm_shape(camp_boundary) +
+  tm_borders(col = "cyan", lwd = 2, alpha = 0.8) +  # Boundary
+  
+  # OSM roads
+  tm_shape(camp_roads) +
+  tm_lines(lwd = 1, 
+           col = "fclass",
+           palette = "Set1") +  # OSM Roads
+  
+  # Drainage System
+  tm_shape(camp_drainage) +
+  tm_lines(lwd = 2, col = "#1f78b4") +
+  tm_add_legend(type = "line", labels = "Drainage System", lwd = 2, col = "#1f78b4", title = "Critical Infrastructure") +
+
+  # # Sanitary
+  # tm_shape(camp_sanitary) +
+  # tm_fill(col = "#fbb4ae", alpha = 0.8, legend.show = TRUE) +
+  # tm_borders(col = "black", lwd = 0.5) +  # Add black border
+  # tm_add_legend(type = "fill", labels = "Sanitary Units", col = "#fbb4ae") +  # Sanitary
+  
+  # Critical Building Infrastructure
+  tm_shape(camp_ci) +
+  tm_fill("#ccebc5", alpha = 0.5) +
+  tm_borders(col = "black", lwd = 0.5) +
+  tm_add_legend(type = "fill", labels = "Critical Building Infrastructure", col = "#ccebc5") +
+  
+  # UNHCR facilities
+  tm_shape(camp_facilities) + 
+  tm_fill(col = "Facility", alpha = 0.8, palette = "Pastel2") +  # Facility
+  
+  # Land use
+  tm_shape(camp_land_use) +
+  tm_fill("#ffffcc", alpha = 0.5) +
+  tm_borders(col = "black", lwd = 0.5) +
+  tm_add_legend(type = "fill", labels = "Agriculture", col = "#ffffcc", title = "Land Use") +
+  
+  # Vulnerable Groups
+  tm_shape(camp_vul_groups) +
+  tm_fill("#fed9a6", alpha = 0.5) +
+  tm_borders(col = "black", lwd = 0.5) +
+  tm_add_legend(type = "fill", labels = "Vulnerable Groups", col = "#fed9a6", title = "Presence of vulnerable groups") +
+  
+  # Google Buildings 
+  tm_shape(camp_buildings) +
+  tm_fill("#AEC7E8", alpha = 0.8) +
+  tm_borders(col = "black", lwd = 0.1) +
+  tm_add_legend(type = "fill", labels = "Buildings", col = "#AEC7E8", title = "Buildings") +
+  
+  # Shelter Type
+  tm_shape(camp_shelter_type) +
+  tm_fill("#decbe4", alpha = 0.5) +
+  tm_borders(col = "black", lwd = 0.5) +
+  tm_add_legend(type = "fill", labels = "Shelter Type", col = "#decbe4") +
+
+  # Basemap options
+  tm_basemap("Esri.WorldTopoMap") +  # Basemap 1
+  tm_basemap("Esri.WorldImagery") +  # Basemap 2
+  tm_basemap("Stamen.TonerLite") +  # Basemap 3
+  tm_basemap("OpenStreetMap.Mapnik") +  # Basemap 4
+  
+  tm_layout(legend.outside = TRUE, frame = FALSE) +  # Place legend outside the plot
+
+  tm_scale_bar(position = c("left", "bottom")) +  # Add scale bar
+  tm_compass(type="arrow", position=c(0, .2)) +  # Add compass
+  tm_layout(main.title = 'Pseudo-Refugee-Camp Data', title.size = 0.5)
+
+# Display the map
+tm_view(tm_syn_camp)
+
+# Save tmap 
+tmap_save(tm_syn_camp, file.path(figureFolder, "vector_map.png"), height = 7)
+```
+
+# Data Preprocessing
+In order to get a new dataframe which only contains the facilities, the mapped facility areas are intersected with the building dataset 
+
+```{r Filter shelters}
+# First, create multipolygon 
+camp_buildings_sfc <- st_combine(camp_buildings)
+camp_facilities_sfc <- st_combine(camp_facilities)
+
+# Calculate the intersection
+facility_buildings <- st_intersection(camp_buildings, camp_facilities) #all buildings which are located in a mapped facility area
+```
+
+```{r Filter residential shelters}
+# Find exactly congruent geometries
+exactly_congruent <- st_equals(camp_buildings, camp_facilities)
+
+# Filter non-congruent buildings
+non_congruent_buildings <- camp_buildings %>%
+  filter(!row_number() %in% unlist(exactly_congruent))
+
+# Removing areas that intersect
+camp_residential_shelter <- st_difference(non_congruent_buildings, st_union(camp_facilities))
+```
+
+```{r Plot shelter and facility buildings}
+# Check
+tmap_mode("plot")
+
+basemap_imagery <-  tm_basemap("Esri.WorldTopoMap") 
+
+# Create a tmap object with two layers
+tm_shelter_camp <- tm_shape(camp_boundary) +
+  tm_borders(col = "cyan", lwd = 2, alpha = 0.8) +
+  
+  #UNHCR facilities
+  tm_shape(facility_buildings) +
+  tm_fill(col = "Facility", alpha = 0.8) +
+
+  # Shelter
+  tm_shape(camp_residential_shelter) +
+  tm_fill("#808080", alpha = 0.8) +
+  
+  # # Sanitary units
+  # tm_shape(mah_sanitary) +
+  # tm_fill("blue", alpha = 0.8) +
+  
+  basemap_imagery +
+  tm_layout(legend.position = c(0.05, 0.05)) # Bottom-left corner
+
+# Display the map
+tm_view(tm_shelter_camp)
+```
+Assign boolean classes to categorical data: If indicator is present in location, assign value 1, else 0. e.g., for the presence of vulnerable people.
+
+```{r Boolean class}
+
+# Mark presence of asset with Class == 1
+
+# Presence of vulnerable groups 
+camp_vul_groups <- camp_vul_groups %>% mutate(Class = 1)
+camp_ci <- camp_ci %>% mutate(Type = 1)
+camp_drainage <- camp_drainage %>% mutate(Type = 1)
+```
+
+
+# Raster calculation
+
+```{r Bounding box}
+# Define grid cell size
+grid_cell_size <- 30
+
+# Calculate the bounding box of camp_boundary
+bbox_camp <- st_bbox(camp_boundary)
+
+# Define the upper left corner coordinates with additional grid cell sizes in both x and y directions
+upper_left_corner <- c(x = bbox_camp[1] - (2 * grid_cell_size), y = bbox_camp[4] + (4 * grid_cell_size))
+
+# Define the dimensions of the rectangle in meters with additional grid cell sizes
+x_length <- (55 + 4) * grid_cell_size
+y_length <- (62 + 6) * grid_cell_size  # Additional 2 grid cell sizes (1 for upper and 1 for lower)
+
+# Calculate the coordinates of the other corners
+upper_right_corner <- c(x = upper_left_corner[1] + x_length, y = upper_left_corner[2])
+lower_right_corner <- c(x = upper_right_corner[1], y = upper_right_corner[2] - y_length)
+lower_left_corner <- c(x = upper_left_corner[1], y = lower_right_corner[2])
+
+# Create the coordinates for the rectangular polygon
+rectangle_coords <- rbind(
+  c(upper_left_corner[1], upper_left_corner[2]),
+  c(upper_right_corner[1], upper_right_corner[2]),
+  c(lower_right_corner[1], lower_right_corner[2]),
+  c(lower_left_corner[1], lower_left_corner[2]),
+  c(upper_left_corner[1], upper_left_corner[2])
+)
+
+# Create the sf object
+rectangle_camp <- st_polygon(list(rectangle_coords)) %>%
+  st_sfc(crs = st_crs(camp_boundary))
+```
+
+# Creating a grid (regular resselation)
+
+```{r Create Grid}
+grid <- rectangle_camp %>%
+  st_make_grid(cellsize = c(grid_cell_size, grid_cell_size, square = T)) %>%
+  #st_intersection(camp_boundary) %>%
+  st_cast("MULTIPOLYGON") %>%
+  st_sf() %>%
+  mutate(id = row_number()) %>%
+  mutate(grid_area = st_area(.)) # Calculate grid cell area 
+```
+
+## Calculation indicator layer
+
+# Population density 
+
+The camp population in the refugee camp is for example at a number of 15'000 individual. To distribute the total population evenly across buildings, taking into account the area of each building so that larger buildings can house more people.
+
+1. Calculation of total area of all buildings 
+2. Calculate the overall population density, which is the total population divided by the total area of all buildings.
+3. Multiply the area of each building by the population density to estimate the number of people each building can house.
+
+```{r Average Camp Population}
+# Camp population (Consult UNHCR Reports)
+camp_pop_23 <- 15000
+
+# Number of buildings 
+n_buildings_camp <- nrow(camp_buildings)
+print("# Buildings Camp")
+n_buildings_camp
+
+# Number of shelter
+n_res_shelter_camp <- nrow(camp_residential_shelter)
+print("# Shelter Camp")
+n_res_shelter_camp
+
+# Calculate average population per shelter
+average_population <- camp_pop_23 / nrow(camp_residential_shelter)
+print("Average number of people per shelter")
+average_population
+```
+The average occupancy of a shelter is almost 8 people per shelter. This number seems to be in line with the UNHCR data, which states that a shelter is designed to accommodate two families. 
+
+```{r Distribute population count}
+# Assign average occupancy number to each shelter to get the spatial distribution of the camp population 
+camp_residential_shelter$estimated_people <- average_population
+
+# Now, the 'shelter' data frame should contain the estimated number of people each building can house
+```
+
+```{r Shelter count}
+# Calculate centroid for each shelter
+camp_shelter_centroids <- st_centroid(camp_residential_shelter)
+
+# Assign shelters to grid cells based on centroid
+shelter_grid_join <- st_join(camp_shelter_centroids, grid, join = st_intersects)
+
+# Count number of shelters per grid cell
+shelter_count_per_grid <- shelter_grid_join %>%
+  group_by(id) %>%
+  summarize(shelter_count = n()) %>%
+  ungroup()
+
+class(shelter_count_per_grid)
+
+# Join the shelter count with the grid
+grid <- st_join(grid, shelter_count_per_grid, join = st_intersects, left = TRUE)
+grid$shelter_count <- replace(grid$shelter_count, is.na(grid$shelter_count), 0) # replace NA values with 0 
+
+# Drop the 'id.y' column
+grid <- grid[, !grepl("id.y", names(grid))]
+# Rename id.x to id
+names(grid)[names(grid) == "id.x"] <- "id"
+```
+
+```{r Plot Population Count}
+# Join shelter with grid cells and summarize the number of people in each grid cell
+population_grid <- grid %>%
+  st_join(camp_residential_shelter) %>%
+  group_by(id) %>%
+  summarize(
+    estimated_people = sum(!is.na(id)),
+    shelter_count = n_distinct(id))
+
+# Transform estimated_people == 1 to 0
+population_grid <- population_grid %>%
+  mutate(estimated_people = ifelse(estimated_people == 1, 0, estimated_people))
+```
+
+```{r Population density}
+
+# Calculate population density
+population_grid$population_density <- population_grid$estimated_people / (30 * 30)  # population is counted for a 30x30 meter grid cell
+
+# Normalize population density
+min_density <- min(population_grid$population_density)
+max_density <- max(population_grid$population_density)
+population_grid$normalized_density <- (population_grid$population_density - min_density) / (max_density - min_density)
+
+# Now 'population_grid' contains the population density and normalized density
+```
+
+# Vulnerable Groups
+
+```{r Existence of vulnerable groups}
+# Join polygons with grid cells
+vul_groups_grid <- grid %>%
+  st_join(camp_vul_groups) 
+
+# Transform existence of vulnerable groups == 1, NA == 0
+vul_groups_grid <- vul_groups_grid %>%
+  mutate(vul_group = ifelse(!is.na(Class), 1, 0))
+```
+
+
+# Critical Infrastructure 
+
+Existence of fragile infrastructure + Sanitation Network + Drainage System
+
+```{r Existence of fragile CI}
+# Join polygons with grid cells
+ci_grid <- grid %>%
+  st_join(camp_ci) 
+
+# Transform existence of critical infrastructure == 1, NA == 0
+ci_grid <- ci_grid %>%
+  mutate(ci = ifelse(!is.na(Type), 1, 0))
+```
+
+Drainage System
+```{r Drainage Grid}
+# Join drainage polygon with grid 
+drainage_grid <- grid %>%
+  st_join(camp_drainage)
+
+# Transform existence of drainage systems == 1, NA == 0
+drainage_grid <- drainage_grid %>%
+  mutate(drainage = ifelse(!is.na(Type), 1, 0)) %>%
+  mutate(rank = ifelse(!is.na(Type), 2, 0)) # assign vulnerability rank 
+```
+
+# Facilities
+
+Facility vulnerability ranks
+```{r Facility ranks}
+# Extract unique class names
+class_names <- unique(facility_buildings$Facility)
+
+# Output the unique class names
+print(class_names)
+
+# Create a dataframe with class names and their ranks for social and physical vulnerability
+facility_classes <- c("School", "Health Center", "Cultural facilities", "Youth/women centers", "Administrative Facilities", "Security", "Nutrition Center", "Distribution center", "Open Spaces")
+social_vulnerability_ranks <- c(2, 3, 2, 2, 2, 3, 3, 2, 1)  # Assign ranks for social vulnerability
+physical_vulnerability_ranks <- c(2, 2, 3, 2, 2, 2, 2, 2, 0)  # Assign ranks for physical vulnerability
+
+# Create a dataframe
+facility_vulnerability <- data.frame(Facility = facility_classes, 
+                                     Social_Vulnerability_Rank = social_vulnerability_ranks,
+                                     Physical_Vulnerability_Rank = physical_vulnerability_ranks)
+
+# Print the dataframe
+print(facility_vulnerability)
+
+# Join the dataframes by the "Facility" column
+facility_buildings_ranked <- left_join(facility_buildings, facility_vulnerability, by = "Facility") 
+print(facility_buildings_ranked)
+```
+
+First, calculate number of facilities per grid cell, meaning that when a building intersects a grid cell > add 1 to the count. 
+
+To calculate the facilities social vulnerability of each grid cell based on the normalized area of facility buildings and their respective weights, the following steps where taken:
+
+```{r Facilities social vulnerability per grid cell}
+
+# Step 1: Intersect facility buildings with grid cells
+facility_grid_intersect <- st_intersection(facility_buildings_ranked, grid)
+
+# Step 2: Calculate the area of each intersection
+facility_grid_intersect <- facility_grid_intersect %>%
+  mutate(intersection_area = st_area(geometry))
+
+# Step 3: Group by facility class and grid cell ID
+facility_grid_grouped <- facility_grid_intersect %>%
+  group_by(Facility, id, grid_area) %>%
+  summarize(total_area = sum(intersection_area)) # per facility class
+
+# Step 4: Calculate the relative area by normalizing total area by grid area
+
+# Convert the units of total_area to match the units of grid_area
+facility_grid_grouped <- facility_grid_grouped %>%
+  mutate(total_area = as.numeric(total_area))  # Convert total_area to numeric
+
+# Now calculate the relative area by normalizing total area by grid area
+facility_grid_grouped <- facility_grid_grouped %>%
+  mutate(relative_area = total_area / grid_area) %>%
+  ungroup()  # Remove grouping
+
+# Weighted values 
+# Merge class ranks with facility_grid_grouped based on class names
+facility_grid_grouped <- merge(facility_grid_grouped, facility_vulnerability, by.x = "Facility", by.y = "Facility", all.x = TRUE)
+
+# Calculate weighted sum of relative areas using provided ranks
+
+#SOC
+facility_grid_grouped_soc <- facility_grid_grouped %>%
+  mutate(weighted_sum_soc = relative_area * (social_vulnerability_ranks))
+
+# PHY
+facility_grid_grouped_phy <- facility_grid_grouped %>%
+  mutate(weighted_sum_phy = relative_area * (physical_vulnerability_ranks))
+```
+
+```{r Check for invalid geometries}
+#SOC
+
+# Check for and potentially fix invalid geometries
+facility_grid_grouped_soc_valid <- facility_grid_grouped_soc %>%
+ mutate(valid_geometry = st_is_valid(geometry))
+
+# Check for invalid geometries
+invalid_geometries <- facility_grid_grouped_soc_valid %>%
+  filter(!valid_geometry)
+
+# Print output if there are invalid geometries
+if(nrow(invalid_geometries) > 0) {
+  print("Invalid geometries found:")
+  print(invalid_geometries)
+} else {
+  print("No invalid geometries found.")
+}
+
+# If there are invalid geometries, you can attempt to fix them
+facility_grid_grouped_soc_fixed <- facility_grid_grouped_soc_valid %>%
+  filter(valid_geometry == FALSE) %>%
+  mutate(geometry = st_make_valid(geometry))
+
+# Now recheck for validity
+facility_grid_grouped_soc_fixed <- facility_grid_grouped_soc_fixed %>%
+  mutate(valid_geometry = st_is_valid(geometry))
+
+# Combine the fixed geometries with the rest of the data
+facility_grid_grouped_soc <- rbind(facility_grid_grouped_soc_valid %>% filter(valid_geometry == TRUE), facility_grid_grouped_soc_fixed)
+
+# PHY
+
+# Check for and potentially fix invalid geometries
+facility_grid_grouped_phy_valid <- facility_grid_grouped_phy %>%
+  mutate(valid_geometry = st_is_valid(geometry))
+
+# Check for invalid geometries
+invalid_geometries <- facility_grid_grouped_phy_valid %>%
+  filter(!valid_geometry)
+
+# Print output if there are invalid geometries
+if(nrow(invalid_geometries) > 0) {
+  print("Invalid geometries found:")
+  print(invalid_geometries)
+} else {
+  print("No invalid geometries found.")
+}
+
+# If there are invalid geometries:
+facility_grid_grouped_phy_fixed <- facility_grid_grouped_phy_valid %>%
+  filter(valid_geometry == FALSE) %>%
+  mutate(geometry = st_make_valid(geometry))
+
+# Now recheck for validity
+facility_grid_grouped_phy_fixed <- facility_grid_grouped_phy_fixed %>%
+  mutate(valid_geometry = st_is_valid(geometry))
+
+# Combine the fixed geometries with the rest of the data
+facility_grid_grouped_phy <- rbind(facility_grid_grouped_phy_valid %>% filter(valid_geometry == TRUE),
+                               facility_grid_grouped_phy_fixed)
+
+```
+
+```{r Summarize and Normalize grid counts}
+# SOC
+
+#----
+# Combine the (fixed) geometries with the rest of the data
+#facility_grid_grouped_soc <- rbind(facility_grid_grouped_soc %>% filter(valid_geometry == TRUE),
+#                               facility_grid_grouped_soc_fixed)
+
+# Summarize the data per grid cell
+facility_grid_summed_soc <- facility_grid_grouped_soc %>%
+  filter(id != 120) %>% # since this geometry is causing trouble but very small so it can be neglected
+  group_by(id) %>%
+  summarize(sum_weighted_values = sum(weighted_sum_soc, na.rm = TRUE)) 
+
+
+# Normalize the summed values to be within a score of 0 and 1
+max_sum <- max(facility_grid_summed_soc$sum_weighted_values)
+min_sum <- min(facility_grid_summed_soc$sum_weighted_values)
+
+facility_grid_grouped_soc <- facility_grid_summed_soc %>%
+  mutate(normalized_score = (sum_weighted_values - min_sum) / (max_sum - min_sum))
+
+sf_use_s2(FALSE)
+
+#PHY
+
+# Combine the (fixed) geometries with the rest of the data
+#facility_grid_grouped_phy <- rbind(facility_grid_grouped_phy %>% filter(valid_geometry == TRUE),
+#                               facility_grid_grouped_phy_fixed)
+
+# Summarize the data
+facility_grid_summed_phy <- facility_grid_grouped_phy %>%
+  group_by(id) %>%
+  summarize(sum_weighted_values = sum(weighted_sum_phy, na.rm = TRUE)) %>%
+  filter(id != 120) # since this geometry is causing trouble but very small so it can be neglected
+
+# Normalize the summed values to be within a score of 0 and 1
+max_sum <- max(facility_grid_summed_phy$sum_weighted_values)
+min_sum <- min(facility_grid_summed_phy$sum_weighted_values)
+
+facility_grid_grouped_phy <- facility_grid_summed_phy %>%
+  mutate(normalized_score = (sum_weighted_values - min_sum) / (max_sum - min_sum))
+```
+
+```{r Cleaned facility df}
+#SOC
+# Drop the geometry column from the sf object for later join
+facility_grid_grouped_soc_df <- st_drop_geometry(facility_grid_grouped_soc)
+
+# Left join the full grid with the summarized data
+facility_soc_grid <- left_join(grid, facility_grid_grouped_soc_df, by = "id")
+
+# Convert normalized_score column to numeric
+facility_soc_grid$normalized_score <- as.numeric(as.character(facility_soc_grid$normalized_score))
+
+# Replace NA values in the normalized_score column with 0
+facility_soc_grid$normalized_score[is.na(facility_soc_grid$normalized_score)] <- 0
+
+# Tidy df
+facility_soc_grid$sum_weighted_values <- NULL
+
+
+#PHY
+# Drop the geometry column from the sf object for later join
+facility_grid_grouped_phy_df <- st_drop_geometry(facility_grid_grouped_phy)
+
+# Left join the full grid with the summarized data
+facility_phy_grid <- left_join(grid, facility_grid_grouped_phy_df, by = "id")
+
+# Convert normalized_score column to numeric
+facility_phy_grid$normalized_score <- as.numeric(as.character(facility_phy_grid$normalized_score))
+
+# Replace NA values in the normalized_score column with 0
+facility_phy_grid$normalized_score[is.na(facility_phy_grid$normalized_score)] <- 0
+
+# Tidy df
+facility_phy_grid$sum_weighted_values <- NULL
+```
+
+# Land use 
+
+# Land cover with synthetic camp data 
+
+- agricultural areas: 3
+- open spaces: 2
+
+```{r Land Use grid data}
+
+camp_land_use <- camp_land_use %>%
+  mutate(Rank = ifelse(Type == "Agricultural Land", 3,
+                ifelse(Type == "Open Space", 2, NA))) %>%
+  mutate(norm = scale(Rank, center = FALSE, scale = max(Rank, na.rm = TRUE))) %>%
+  mutate(norm = as.numeric(norm))
+
+# Join polygons with grid cells
+cover_grid <- grid %>%
+  st_join(camp_land_use) %>%
+  mutate(norm = ifelse(is.na(norm), 0, norm))
+```
+
+Alternative / if no local data available, using the GLCLU dataset. 
+
+```{r Land use}
+# # Clip raster layer to boundary
+# clipped_raster <- crop(GLCLUC2020, extent(camp_boundary))
+# mah_land_use_raster <- mask(clipped_raster, camp_boundary)
+# 
+# class(grid)
+# 
+# # Plot the clipped raster to visualize
+# 
+# plot(mah_land_use_raster,
+#      col = names,
+#      main="Land Cover GLCLUC2020",
+#      axes = F)
+# plot(grid, add = T, col = "transparent")
+# plot(mah_buildings, add = T)
+# 
+# # Extracted raster cells and percentage of area
+# # covered within each polygon
+# valuesatcell <- extract(mah_land_use_raster, grid, na.rm = TRUE, weights = TRUE)
+# 
+# # Change column names
+# colnames(valuesatcell)[1] <- "id"
+# colnames(valuesatcell)[2] <- "land_use_class"
+```
+
+```{r}
+# Classification of land cover classes
+# 
+# land_use_classes <- unique(valuesatcell$land_use_class)
+# print(land_use_classes)
+# 
+# # Create a dataframe with class names and their ranks for social and physical vulnerability
+# lu_classes <- c(250, 244, 22, 23, 24, 205, 203, 207, 202, 20, 16, 17, 18, 124, 25, 19, 26, 206, 27, 21)
+# cover_name <- c("Built-up", "Cropland", "Dense short vegetation", "Dense short vegetation", "Dense short vegetation", "Open surface water",  "Open surface water", "Open surface water", "Open surface water", "Dense short vegetation", "Semi-arid", "Semi-arid", "Semi-arid", "Dense short vegetation", "Tree cover", "Dense short vegetation", "Tree cover", "Open surface water", "Tree cover", "Dense short vegetation")  
+# vulnerability_rank <- c(0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+# 
+# # Create a dataframe
+# lu_classes <- data.frame(class = lu_classes, 
+#                                     name = cover_name, 
+#                                     rank = vulnerability_rank)
+# 
+# # Join classes and ranks df with valuesatcell
+# lu_cell <- left_join(valuesatcell, lu_classes, by = c("land_use_class" = "class"))
+```
+
+
+# Shelter type
+
+Assign higher vulnerability score to the 
+
+Abandoned shelters location form mapping workshop: not quite sure where exactly but but structurally sensitive!! 
+
+Shelter Physical Vulnerability: 
+
+1. Emergency: Habitable covered living space providing a secure and healthy environment with privacy and dignity. The shelters typically simple, one room structures implemented to provide critical life saving emergency assistance
+  --> vulnerability rank: 3
+
+2. Transitional: A range of shelter options that help populations affected by a humanitarian crises progress from an initial emergency arrangement to a more suitable shelter solution, better adapted to their needs in terms of habitability.
+  --> vulnerability rank: 2
+
+3. Durable: Beyond the emergency and transitional phase, shelters that are adapted and contextualized according to the following elements: climate, cultural practice and habits, local availability of skills, access to adequate construction materials and geographical context.
+  --> vulnerability rank: 1
+  
+4. Abandoned: Not inhabited, fragile structure
+  --> vulnerability rank: 1
+  
+```{r Assign Shelter Type Vulnerability Ranks}
+# Assign vulnerability ranks 
+mah_shelter_type <- camp_shelter_type %>%
+  mutate(rank = case_when(
+    Type %in% c("Emergency") ~ 3,
+    Type == "Transitional" ~ 2,
+    Type == "Durable" ~ 1,
+    Type == "Abandoned" ~ 1,
+    TRUE ~ NA_integer_
+  ))
+
+# Intersect shelter type polygon with grid 
+shelter_type_intersect <- st_intersection(mah_shelter_type, grid) 
+
+# Drop the geometry column from the sf object for later join
+shelter_type_intersect_df <- st_drop_geometry(shelter_type_intersect)
+
+# Join polygons with grid cells
+shelter_type_grid <- left_join(grid, shelter_type_intersect_df, by = "id")
+
+# Transform existence of shelter type == 1, NA == 0
+shelter_type_grid <- shelter_type_grid %>%
+  mutate(exist = ifelse(!is.na(Type), 1, 0))
+```
+
+```{r Calculate normalized shelter density }
+# Normalize shelter count per grid cell
+
+shelter_density_grid <- grid
+
+# Calculate shelter density
+shelter_density_grid$shelter_density <- shelter_density_grid$shelter_count / (30 * 30)  # shelters are counted for a 30x30 meter grid cell
+
+# Normalize shelter density
+min_density_s <- min(shelter_density_grid$shelter_density)
+max_density_s <- max(shelter_density_grid$shelter_density)
+shelter_density_grid$normalized_density <- scale(shelter_density_grid$shelter_density, 
+                                                 center = min_density_s, 
+                                                 scale = max_density_s - min_density_s)
+
+shelter_density_grid <-  shelter_density_grid %>% mutate(normalized_density = as.numeric(normalized_density))  # Convert to numeric
+```
+2.	Join shelter type grid with the shelter density grid by grid cell id
+3.	if shelter type “exist” == 1 then multiply the shelter density “normalized_density” by the rank “rank” and store the value in a new column “weight”, if “exist” == 0, then just take “normalized_density” and store it in weight
+4.	normalize the weight [0;1]
+
+```{r Plot Shelter Type Density}
+# Drop the geometry column from the sf object for later join
+shelter_density_grid_df <- st_drop_geometry(shelter_density_grid)
+
+# Step 2: Join shelter type grid with the shelter density grid by grid cell id
+shelter_density_type_grid <- left_join(shelter_type_grid, shelter_density_grid_df, by = "id")
+
+# Step 2: Create the weight column based on conditions
+shelter_density_type_grid <- shelter_density_type_grid %>%
+  mutate(weight = ifelse(exist == 1, normalized_density * rank, normalized_density))
+
+# Step 3: Normalize the weight between [0,1]
+min_weight <- min(shelter_density_type_grid$weight, na.rm = TRUE)
+max_weight <- max(shelter_density_type_grid$weight, na.rm = TRUE)
+shelter_density_type_grid$normalized_w <- scale(shelter_density_type_grid$weight, 
+                                                center = min_weight,
+                                                scale = max_weight - min_weight)
+
+shelter_density_type_grid <-  shelter_density_type_grid %>% mutate(normalized_w = as.numeric(normalized_w))  # Convert to numeric
+```
+
+# Roads / Transport 
+
+Rank the road types 
+
+```{r}
+# Rename fcalss column
+camp_roads <- camp_roads %>% rename("Type" = "fclass")
+head(camp_roads)
+```
+
+```{r Road ranks}
+# Extract unique road class names
+road_types <- unique(camp_roads$Type)
+print(road_types)
+
+mapview(camp_roads, zcol = "Type")
+
+# Create a dataframe with class names and their ranks
+road_classes <- c("residential", "service", "unclassified", "path", "footway")
+road_ranks <- c(2, 3, 1, 1, 1)  # Assign ranks for social vulnerability
+
+# Create a dataframe
+road_vulnerability <- data.frame(Type = road_classes, 
+                                     Rank = road_ranks)
+
+# Print the dataframe
+print(road_vulnerability)
+
+# Join the dataframes by the "Facility" column
+roads_ranked <- left_join(camp_roads, road_vulnerability, by = "Type") 
+head(roads_ranked)
+```
+
+```{r Roads Vector data}
+tmap_mode("plot")
+```
+
+```{r Roads Grid Intersect}
+# Intersect road type polygon with grid 
+road_type_intersect <- st_intersection(roads_ranked, grid) 
+head(road_type_intersect)
+
+# Drop the geometry column from the sf object for later join
+road_type_intersect_df <- st_drop_geometry(road_type_intersect)
+
+# Summarize the data
+road_grid_summed <- road_type_intersect_df %>%
+  group_by(id) %>%
+  summarize(sum_ranks = sum(Rank, na.rm = TRUE))
+
+# Normalize the summed values to be within a score of 0 and 1
+max_sum_r <- max(road_grid_summed$sum_ranks)
+min_sum_r <- min(road_grid_summed$sum_ranks)
+
+road_grid_summed <- road_grid_summed %>%
+  mutate(normalized_score = (sum_ranks - min_sum_r) / (max_sum_r - min_sum_r))
+
+# Convert column to numeric 
+road_grid_summed <- road_grid_summed %>% mutate(normalized_score = as.numeric(normalized_score))  # Convert to numeric
+
+# Join polygons with grid cells
+road_type_grid <- left_join(grid, road_grid_summed, by = "id")
+
+# Transform existence of road segments within an grid to 1, NA == 0
+road_type_grid <- road_type_grid %>%
+  mutate(normalized_score = ifelse(is.na(normalized_score), 0, normalized_score)) # Replace NA values in Rank with 0 > no roads within a grid cell
+```
+
+# Rasterization of grid layer
+
+```{r Resample grid}
+# Create template stars object for rasterization
+grid_stars <- st_as_stars(st_bbox(grid))
+class(grid_stars)
+
+grid_matrix <- grid  # Replace your_grid_data with your actual grid data
+
+# Get the dimensions of the grid matrix
+nx <- 55
+ny <- 62
+
+grid_temp <- st_rasterize(grid, st_as_stars(st_bbox(grid), nx = nx, ny = ny, values = NA_real_), align = T)
+
+# Rasterize population_grid using the raster template
+soc1_raster <- st_rasterize(population_grid %>% dplyr::select(normalized_density, geometry),
+                             template = grid_temp, align = T)
+```
+
+```{r Camp extent}
+# Starting with rasterizing the Camp boundary 
+
+# Clip the raster to the extent of the polygon
+bound_rast <- raster(camp_boundary) 
+class(bound_rast)
+```
+
+
+```{r Rasterization of indicator layer}
+
+# Rasterize based on geometry and a column value.
+soc1_raster <- st_rasterize(population_grid %>% dplyr::select(normalized_density, geometry),
+                             template = grid_temp, align = T)
+# Convert stars object to raster
+soc1_raster <- as(soc1_raster, "Raster") %>% 
+  mask(., camp_boundary)
+
+soc2_raster <- st_rasterize(vul_groups_grid %>% dplyr::select(vul_group, geometry),
+                             template = grid_temp, align = T)
+soc2_raster <- as(soc2_raster, "Raster") %>% 
+  mask(., camp_boundary)
+
+soc3_raster <- st_rasterize(facility_soc_grid %>% dplyr::select(normalized_score, geometry),
+                             template = grid_temp, align = T)
+soc3_raster <- as(soc3_raster, "Raster") %>% 
+  mask(., camp_boundary)
+
+soc4_raster <- st_rasterize(cover_grid %>% dplyr::select(norm, geometry),
+                             template = grid_temp, align = T) 
+soc4_raster <- as(soc4_raster, "Raster") %>% 
+  mask(., camp_boundary)
+
+phy1_raster <- st_rasterize(shelter_density_type_grid %>% dplyr::select(normalized_w, geometry), 
+                             template = grid_temp, align = T)
+phy1_raster <- as(phy1_raster, "Raster") %>% 
+  mask(., camp_boundary)
+
+phy3_raster <- st_rasterize(facility_phy_grid %>% dplyr::select(normalized_score, geometry),
+                             template = grid_temp, align = T)
+phy3_raster <- as(phy3_raster, "Raster") %>% 
+  mask(., camp_boundary)
+
+phy4_raster <- st_rasterize(road_type_grid %>% dplyr::select(normalized_score, geometry),
+                             template = grid_temp, align = T)
+phy4_raster <- as(phy4_raster, "Raster") %>% 
+  mask(., camp_boundary)
+```
+
+
+*Critical Infrastructure raster*
+Overlay rasters and weight by rank: 
+
+-	Fragile shelter infrastructure -> 3
+-	Sanitation Network / Sanitary units -> 3
+-	Drainage System -> 2
+
+```{r Rasterization of CI}
+ci_raster <- st_rasterize(ci_grid %>% dplyr::select(ci, geometry), 
+                             template = grid_temp, align = T)
+ci_raster <- as(ci_raster, "Raster") %>% 
+  mask(., camp_boundary)
+
+# sanitary_raster <- st_rasterize(sanitary_density_grid %>% dplyr::select(normalized_density, geometry),
+#                               template = grid_temp, align = T)
+# 
+# sanitary_raster <- as(sanitary_raster, "Raster") %>% 
+#   mask(., camp_boundary)
+
+drainage_raster <- st_rasterize(drainage_grid %>% dplyr::select(drainage, geometry),
+                              template = grid_temp, align = T)
+drainage_raster <- as(drainage_raster, "Raster") %>% 
+  mask(., camp_boundary)
+
+# Create final raster using weigthed overlay and assigned ranks 
+ci_final_raster <- (ci_raster * 3)  + (drainage_raster * 2) # + (sanitary_raster * 3)
+
+# Rescale the values of ci_final_raster to range from 0 to 1
+min_value <- minValue(ci_final_raster)
+max_value <- maxValue(ci_final_raster)
+
+# Rescale the values of ci_final_raster to range from 0 to 1
+phy2_raster <- (ci_final_raster - min_value) / (max_value - min_value)
+```
+
+
+```{r Plotting individual vulnerability indicator raster maps}
+# Plot each raster
+plot1 <- plot(soc1_raster, main="Population Density", axes=F, box=F)
+plot2 <- plot(soc2_raster, main="Vulnerability Groups", axes=F, box=F)
+plot3 <- plot(soc3_raster, main="Facility SOC", axes=F, box=F)
+plot4 <- plot(soc4_raster, main="Cover Grid", axes=F, box=F)
+
+plot5 <- plot(phy1_raster, main="Shelter Density Type", axes=F, box=F)
+plot6 <- plot(phy2_raster, main="CI Grid", axes=F, box=F)
+plot7 <- plot(phy3_raster, main="Facility PHY", axes=F, box=F)
+plot8 <- plot(phy4_raster, main="Road Type Grid", axes=F, box=F)
+```
+
+```{r Visualize individual indicator raster layer}
+tmap_mode("plot")
+
+# Define tmaps without legends
+tm_soc1 <- tm_shape(soc1_raster) +
+  tm_raster(palette = "YlOrRd", style = "cont") +
+  tm_layout(legend.show = FALSE, title = "", title.position = c("left", "bottom"), title.size = 1, title.color = "black", frame = FALSE) + 
+  tm_shape(camp_boundary) +
+  tm_borders()
+
+tm_soc2 <- tm_shape(soc2_raster) +
+  tm_raster(palette = "YlOrRd",  style = "cont") +
+  tm_layout(legend.show = FALSE, title = "", title.position = c("left", "bottom"), title.size = 1, title.color = "black", frame = FALSE) + 
+  tm_shape(camp_boundary) +
+  tm_borders()
+
+tm_soc3 <- tm_shape(soc3_raster) +
+  tm_raster(palette = "YlOrRd",  style = "cont") +
+  tm_layout(legend.show = FALSE, title = "", title.position = c("left", "bottom"), title.size = 1, title.color = "black", frame = FALSE) + 
+  tm_shape(camp_boundary) +
+  tm_borders()
+
+tm_soc4 <- tm_shape(soc4_raster) +
+  tm_raster(palette = "YlOrRd",  style = "cont") +
+  tm_layout(legend.show = FALSE, title = "", title.position = c("left", "bottom"), title.size = 1, title.color = "black", frame = FALSE) + 
+  tm_shape(camp_boundary) +
+  tm_borders()
+
+tm_phy1 <- tm_shape(phy1_raster) +
+  tm_raster(palette = "YlOrRd",  style = "cont") +
+  tm_layout(legend.show = FALSE, title = "", title.position = c("left", "bottom"), title.size = 1, title.color = "black", frame = FALSE) + 
+  tm_shape(camp_boundary) +
+  tm_borders()
+
+tm_phy2 <- tm_shape(phy2_raster) +
+  tm_raster(palette = "YlOrRd",  style = "cont") +
+  tm_layout(legend.show = FALSE, title = "", title.position = c("left", "bottom"), title.size = 1, title.color = "black", frame = FALSE) + 
+  tm_shape(camp_boundary) +
+  tm_borders()
+
+tm_phy3 <- tm_shape(phy3_raster) +
+  tm_raster(palette = "YlOrRd",  style = "cont") +
+  tm_layout(legend.show = FALSE, title = "", title.position = c("left", "bottom"), title.size = 1, title.color = "black", frame = FALSE) + 
+  tm_shape(camp_boundary) +
+  tm_borders()
+
+tm_phy4 <- tm_shape(phy4_raster) +
+  tm_raster(palette = "YlOrRd",  style = "cont") +
+  tm_layout(legend.show = F, title = "", title.position = c("left", "bottom"), title.size = 1, title.color = "black", frame = FALSE) +
+  tm_legend(outside = TRUE) + 
+  tm_shape(camp_boundary) +
+  tm_borders()
+
+# Arrange tmaps
+tmap_indicators <- tmap_arrange(tm_soc1, tm_soc2, tm_soc3, tm_soc4, tm_phy1, tm_phy2, tm_phy3, tm_phy4, nrow = 2)
+tmap_indicators
+
+# Save tmap 
+tmap_save(tmap_indicators, file.path(figureFolder, "indicators.png"), height = 5)
+
+png(file.path(figureFolder, "indicators_t.png"), width = 5, height = 5, units = 'in', res = 300, bg = "transparent")
+
+# Print the map to the device
+print(tmap_indicators)
+
+# Turn off the device
+dev.off()
+```
+
+# Weighted raster overlay
+
+By multiplying the individual vulnerability indicators (raster layers [0;1]) with their assigned weight (throught the AHP process) and building the sum, we get the FVI for AHP and FAHP (see Ganji et al. 2022). Weighted linear combination was used. 
+
+indicator	wMin	wModal	wMax	Defuzzified_w	Norm_Defuzzified_w
+SOC_1	0.2740	0.4033	0.6029	0.4267	0.3971
+SOC_2	0.2234	0.3391	0.5249	0.3625	0.3373
+SOC_3	0.1170	0.1836	0.3011	0.2005	0.1866
+SOC_4	0.0443	0.0737	0.1368	0.0849	0.0790
+
+```{r Weighted raster overlay}
+# Fuzzy AHP weights
+f_weight_soc1 <- 0.3971
+f_weight_soc2 <- 0.3373
+f_weight_soc3 <- 0.1866
+f_weight_soc4 <- 0.0790
+
+f_weight_phy1 <- 0.2962
+f_weight_phy2 <- 0.2584
+f_weight_phy3 <- 0.3062
+f_weight_phy4 <- 0.1393
+
+# AHP weights
+
+weight_soc1 <- 0.3416521
+weight_soc2 <- 0.3404284
+weight_soc3 <- 0.2256971
+weight_soc4 <- 0.0922223
+
+weight_phy1 <- 0.2458105
+weight_phy2 <- 0.2375048
+weight_phy3 <- 0.3321112
+weight_phy4 <- 0.1845735
+
+```
+
+## Calculating the HFVI 
+
+```{r HFVI calculation}
+# Weighted overlay
+
+# overlay rasters: FAHP weights
+f_overlayed_soc <- (soc1_raster * f_weight_soc1) + (soc2_raster * f_weight_soc2) + (soc3_raster * f_weight_soc3) + (soc4_raster * f_weight_soc4)
+f_overlayed_phy <- (phy1_raster * f_weight_phy1) + (phy2_raster * f_weight_phy2) + (phy3_raster * f_weight_phy3) + (phy4_raster * f_weight_phy4)
+
+# Overlay rasters: AHP weights
+overlayed_soc <- (soc1_raster * weight_soc1) + (soc2_raster * weight_soc2) + (soc3_raster * weight_soc3) + (soc4_raster * weight_soc4)
+overlayed_phy <- (phy1_raster * weight_phy1) + (phy2_raster * weight_phy2) + (phy3_raster * weight_phy3) + (phy4_raster * weight_phy4)
+```
+
+```{r Nomalization}
+# Normalize function
+normalize <- function(x) {
+  (x - min(x[], na.rm = TRUE)) / (max(x[], na.rm = TRUE) - min(x[], na.rm = TRUE))
+}
+
+# Normalize the intermediate overlays
+overlayed_soc <- normalize(overlayed_soc)
+overlayed_phy <- normalize(overlayed_phy)
+f_overlayed_soc <- normalize(f_overlayed_soc)
+f_overlayed_phy <- normalize(f_overlayed_phy)
+```
+
+```{r Mapping weighted raster overlay}
+
+
+# Fuzzy AHP
+tm_f_soc <- tm_shape(f_overlayed_soc) +
+  tm_raster(palette = "YlOrRd",
+            style = "cont",
+            title = "FAHP") + 
+  tm_layout(legend.show = T, 
+            legend.position = c("left", "bottom"),
+            title = "SOC", 
+            title.position = c("left", "bottom"), 
+            frame = FALSE) +
+    tm_layout(legend.show = T,
+              legend.title.color = "black",
+              legend.position = c("left", "bottom"),
+              legend.text.color = "black",
+              title = "",
+              frame = F) + 
+  tm_shape(camp_boundary) +
+  tm_borders()
+
+
+tm_f_phy <- tm_shape(f_overlayed_phy) +
+  tm_raster(palette = "YlOrRd",
+            style = "cont",
+            title = "FAHP") +
+  tm_layout(legend.show = T,
+            legend.position = c("left", "bottom"),
+            title = "PHY", 
+            title.position = c("left", "bottom"), 
+            frame = FALSE) +
+  tm_layout(legend.show = T,
+              legend.title.color = "black",
+              legend.position = c("left", "bottom"),
+              legend.text.color = "black",
+              title = "",
+              title.position = c("left", "bottom"),
+              frame = F) + 
+  tm_shape(camp_boundary) +
+  tm_borders()
+
+# Arrange tmaps
+tmap_arrange(tm_f_soc, tm_f_phy, nrow = 1)
+
+# AHP
+# Fuzzy 
+tm_soc <- tm_shape(overlayed_soc) +
+  tm_raster(palette = "YlOrRd",
+            style = "cont",
+            title = "AHP") +
+  tm_layout(legend.show = T, 
+            legend.position = c("left", "bottom"),
+            title = "SOC", 
+            title.position = c("left", "bottom"), 
+            frame = FALSE) +
+  tm_layout(legend.show = T,
+              legend.title.color = "black",
+              legend.position = c("left", "bottom"),
+              legend.text.color = "black",
+              title = "",
+              title.position = c("left", "bottom"),
+              frame = F) + 
+  tm_shape(camp_boundary) +
+  tm_borders()
+
+tm_phy <- tm_shape(overlayed_phy) +
+  tm_raster(palette = "YlOrRd",
+            style = "cont",
+            title = "AHP") +
+  tm_layout(legend.show = T,
+            legend.position = c("left", "bottom"),
+            title = "PHY", 
+            title.position = c("left", "bottom"), 
+            frame = FALSE) +
+  tm_layout(legend.show = T,
+              legend.title.color = "black",
+              legend.position = c("left", "bottom"),
+              legend.text.color = "black",
+              title = "",
+              title.position = c("left", "bottom"),
+              frame = F) + 
+  tm_shape(camp_boundary) +
+  tm_borders()
+
+# Arrange tmaps
+tmap_arrange(tm_soc, tm_phy, nrow = 1)
+```
+
+```{r Save figures}
+# Arrange tmaps
+dim_map <- tmap_arrange(tm_f_soc, tm_f_phy, nrow = 1)
+
+# Save tmap 
+tmap_save(dim_map, file.path(figureFolder, "dim_map.png"), width = 10, height = 5)
+```
+
+### LOW PASS FILTER for smoothing 
+Using moving window calculations / focal filtering: The function is applied on the neighborhood using mean for a low-pass filter 
+The purpose of the mean, or low-pass, filter is to produce a smoothed image, where extreme values (possibly noise) are cancelled out.
+
+the lowpass matrix specifies the weights or the kernel used for the focal operation. I am using a 3x3 kernel matrix where all elements are 1. This means that the focal operation will calculate the mean (fun) within a 3x3 neighborhood around each pixel in the raster layer.
+
+```{r Smoothed SOC and PHY vulnerability maps}
+
+# Smoothing of the final raster layer
+
+# Using low-pass filter
+# filter=matrix(1/9, nrow=3, ncol=3) would be equivalent to mean with ngb=3 in the focal function
+lowpass <- matrix(1,3,3) # 3x3 moving window / kernel
+
+f_overlayed_soc_smoothed <- focal(f_overlayed_soc, w = lowpass, fun=mean, na.rm = TRUE) %>%
+  mask(., camp_boundary)
+
+f_overlayed_phy_smoothed <- focal(f_overlayed_phy, w = lowpass, fun=mean, na.rm = TRUE) %>%
+  mask(., camp_boundary)
+
+tm_soc_smoothed <- tm_shape(f_overlayed_soc_smoothed) +
+  tm_raster(palette = "YlOrRd",
+            style = "cont",
+            title = "SOC",
+             breaks = seq(0, 1, by = 0.25)) +
+  tm_layout(legend.show = T,
+              legend.title.color = "black",
+              legend.position = c("left", "bottom"),
+              legend.text.color = "black",
+              title = "",
+              title.position = c("left", "bottom"),
+              frame = F) + 
+  tm_shape(camp_boundary) +
+  tm_borders()
+
+tm_phy_smoothed <- tm_shape(f_overlayed_phy_smoothed) +
+  tm_raster(palette = "YlOrRd",
+            style = "cont",
+            title = "PHY",
+            breaks = seq(0, 1, by = 0.25)) + 
+  tm_layout(legend.show = T,
+              legend.title.color = "black",
+              legend.position = c("left", "bottom"),
+              legend.text.color = "black",
+              title = "",
+              title.position = c("left", "bottom"),
+              frame = F) + 
+  tm_shape(camp_boundary) +
+  tm_borders()
+
+tmap_arrange(tm_soc_smoothed, tm_phy_smoothed, nrow = 1)
+
+```
+
+```{r Resacle domain ranks}
+
+# AHP
+soc_w <- 0.1840118
+phy_w <- 0.2583137
+
+# Calculate the sum
+max_value <- soc_w + phy_w
+
+# Normalize the values
+scaled_value_soc <- soc_w / max_value
+scaled_value_phy <- phy_w / max_value
+
+# Print the results
+scaled_value_soc
+scaled_value_phy
+
+
+# FAHP importance of SOC vs PHY
+
+soc_w_f <- 0.2194
+phy_w_f <- 0.2345
+
+# Calculate the sum
+max_value_f <- soc_w_f + phy_w_f
+
+# Normalize the values
+scaled_value_soc_f <- soc_w_f / max_value_f
+scaled_value_phy_f <- phy_w_f / max_value_f
+
+# Print the results
+scaled_value_soc_f
+scaled_value_phy_f
+
+```
+
+```{r Total overlay}
+# AHP
+tot_vul <- overlayed_soc * scaled_value_soc + overlayed_phy * scaled_value_phy
+# Convert stars object to raster
+tot_vul_raster <- as(tot_vul, "Raster")
+
+#FAHP
+tot_f_vul <- f_overlayed_soc * scaled_value_soc_f + f_overlayed_phy * scaled_value_phy_f
+
+# Convert stars object to raster
+tot_f_vul_raster <- as(tot_f_vul, "Raster")
+```
+
+```{r Normalization}
+# Use normalize function defined above
+
+# Normalize the intermediate overlays
+tot_vul_raster <- normalize(tot_vul_raster)
+tot_f_vul_raster <- normalize(tot_f_vul_raster)
+```
+
+# Mapping the HFVI
+
+```{r Smoothing filter}
+
+# Smoothing of the final raster layer using the defined low-pass filter 
+tot_vul_raster_smoothed <- focal(tot_vul_raster, w = lowpass, fun=mean, na.rm = TRUE) %>%
+  mask(., camp_boundary)
+tot_vul_raster_smoothed <- normalize(tot_vul_raster_smoothed) # Normalize
+
+tot_f_vul_raster_smoothed <- focal(tot_f_vul_raster, w = lowpass, fun=mean, na.rm = TRUE) %>%
+  mask(., camp_boundary)
+tot_f_vul_raster_smoothed <- normalize(tot_f_vul_raster_smoothed) # Normalize
+
+# Plotting
+tmap_mode("plot")
+# Set tmap options
+tmap_options(legend.position = c("left", "bottom"), legend.outside = TRUE, legend.frame = FALSE, legend.title.color = "black", legend.text.color = "black", title.position = c("left", "bottom"), frame = F)
+
+# Create the tm_plot object for FAHP
+tm_vul_smoothed <- tm_shape(tot_vul_raster_smoothed) +
+  tm_raster(palette = "YlOrRd",
+            style = "cont",
+            title = "AHP",
+            breaks = seq(0, 1, by = 0.25)) + 
+  tm_shape(camp_boundary) +
+  tm_borders()
+
+# Plot the object
+tm_vul_smoothed
+
+# Create the tm_plot object for FAHP
+tm_f_vul_smoothed <- tm_shape(tot_f_vul_raster_smoothed) +
+  tm_raster(palette = "YlOrRd",
+            style = "cont",
+            title = "FAHP",
+            breaks = seq(0, 1, by = 0.25)) + 
+  tm_shape(camp_boundary) +
+  tm_borders()
+
+# Plot the object
+tm_f_vul_smoothed
+
+# Arrange tmaps
+tmap_arrange(tm_vul_smoothed, tm_f_vul_smoothed, nrow = 1)
+```
+
+```{r Histrogram of index values}
+hist(tot_vul_raster)
+hist(tot_f_vul_raster)
+
+# Compute the histogram of raster values
+hist_values <- hist(values(tot_f_vul_raster), plot = FALSE)
+hist_values
+
+# Determine classification intervals (example: equal intervals)
+num_breaks <- 4  # Specify the number of intervals
+breaks <- seq(minValue(tot_f_vul_raster), maxValue(tot_f_vul_raster), length.out = num_breaks + 1)
+breaks
+
+# Define labels for each rank
+labels <- c("none", "low", "medium", "high")
+
+# Classify the raster values into different categories
+classified_raster <- cut(values(tot_f_vul_raster), breaks = breaks, labels = labels, include.lowest = TRUE)
+
+# Convert the classified raster back to a RasterLayer object
+classified_raster <- setValues(tot_f_vul_raster, classified_raster)
+
+# Create a subtitle
+subtitle <- "FVI = weigthed SOC + PHY Vulnerability Indicators"
+
+intersect_grid <- st_intersection(grid, camp_boundary)
+```
+# Final HFVI Visualization 
+
+```{r HFVI Map}
+# Set tmap mode to plotting
+tmap_mode("plot")
+
+# Define subtitle
+subtitle <- "FVI = weighted SOC + PHY Vulnerability Indicators"
+
+# Define color palette
+palette <- "YlOrRd"
+
+# Generate Jenks breaks
+jenks_breaks <- classInt::classIntervals(values(tot_f_vul_raster), n = 4, style = "jenks", breaks = seq(0, 1))$brks
+
+# Define labels
+labels = c("None", "Low", "Medium", "High")
+
+# Basemap
+bbox_camp
+osm_map <- read_osm(bbox_camp)
+
+tm_f_vul_jenks <- tm_shape(osm_map) + 
+  tm_rgb(alpha = 0.6) +  # Adjust transparency of the OSM map
+  tm_layout(legend.position = c("left", "bottom"), 
+            frame = FALSE) +  # Adjust legend position and remove frame
+  tm_shape(tot_f_vul_raster) +
+  tm_raster(palette = palette, 
+            style = "fixed", 
+            breaks = jenks_breaks, 
+            labels = labels, 
+            title = "Vulnerability Class", 
+            alpha = 0.6, 
+            legend.hist = TRUE) + 
+  tm_shape(camp_boundary) +
+  tm_borders() +
+  tm_scale_bar(position = c("left", "bottom")) +  # Add scale bar
+  tm_compass(type="arrow", position=c(0, .2)) +  # Add compass
+
+  tm_layout(title = "HFVI for the Refugee Camp",  # Add title
+            title.position = c("left", "top"),  # Adjust title position
+            title.size = 1.5,
+            title.fontface = "bold",
+            legend.hist.size = 1,
+            legend.hist.width = 0.6) +  # Adjust title size
+  
+  tm_layout(legend.show = TRUE,
+            legend.title.color = "black",
+            legend.title.size = 0.9,
+            legend.position = c("left", "bottom"),
+            legend.text.color = "black")   # Adjust legend colors 
+
+
+print(tm_f_vul_jenks)
+
+tmap_save(tm_f_vul_jenks, file.path(figureFolder, "HFVI_map.png"), width = 7, height = 5)
+```
+
+```{r Mapping smoothed HFVI}
+
+# Set tmap mode to plotting
+tmap_mode("plot")
+
+# Basemap
+bbox_camp
+osm_map <- read_osm(bbox_camp)
+
+# Define breaks and labels for the legend
+breaks <- seq(0, 1, by = 0.2)
+
+tm_f_vul_smoothed <- tm_shape(osm_map) + 
+  tm_rgb(alpha = 0.6) +  # Adjust transparency of the OSM map
+  tm_layout(legend.position = c("left", "bottom"), frame = FALSE) +  # Adjust legend position and remove frame
+  tm_shape(tot_f_vul_raster_smoothed) +
+  tm_raster(palette = palette, 
+            style = "cont", 
+            breaks = breaks,
+            title = "HFVI value", 
+            alpha = 0.6, 
+            legend.hist = TRUE) + 
+  tm_shape(camp_boundary) +
+  tm_borders() +
+  tm_scale_bar(position = c("left", "bottom")) +  # Add scale bar
+  tm_compass(type="arrow", position=c(0, .2)) +  # Add compass
+  
+  tm_layout(title = "HFVI for the Refugee Camp",  # Add title
+            title.position = c("left", "top"),  # Adjust title position
+            title.size = 1.5,
+            title.fontface = "bold") + # Adjust title size
+  
+  tm_layout(legend.show = TRUE,
+            legend.title.color = "black",
+            legend.title.size = 0.9,
+            legend.position = c("left", "bottom"),
+            legend.text.color = "black")   # Adjust legend colors 
+
+tm_f_vul_smoothed
+
+tmap_save(tm_f_vul_smoothed, file.path(figureFolder, "HFVI_smoothed.png"), width = 7, height = 5)
+
+```
+
+```{r Export raster}
+writeRaster(tot_f_vul_raster, file.path(figureFolder, "HFVI_f_raster.tif"), overwrite=TRUE)
+writeRaster(tot_f_vul_raster_smoothed, file.path(figureFolder, "HFVI_f_raster_smoothed.tif"), overwrite=TRUE)
+writeRaster(f_overlayed_soc_smoothed, file.path(figureFolder, "HFVI_soc.tif"), overwrite=TRUE)
+writeRaster(f_overlayed_phy_smoothed, file.path(figureFolder, "HFVI_phy.tif"), overwrite=TRUE)
+```
+
+
+# Spatial Analysis
+Goals of spatial autocorrelation: Measuring the strength of spatial relationship and testing assumptions of independence and randomness
+
+```{r Spatial Autocorrelation}
+library(spdep)
+
+# tot_vul is a SpatialPixelsDataFrame
+tot_vul_spdf <- as(tot_f_vul, "SpatialPointsDataFrame")
+
+# Extract raster values from tot_vul
+tot_vul_values <- tot_vul_spdf@data[[1]]  
+
+# Create neighbor list
+nb <- cell2nb(nrow(tot_vul_spdf), ncol(tot_vul_spdf), type = "queen")
+
+# Compute spatial weights matrix
+w <- nb2listw(nb, style = "W")
+
+# Calculate Moran's I
+moran_I <- moran.test(tot_vul_values, w)
+
+# Print Moran's I result
+print(moran_I)
+
+# Capture Moran's I result output
+moran_I_output <- capture.output(print(moran_I))
+
+# Write the output to a .txt file
+writeLines(moran_I_output, file.path(resultsFolder, "morans_I_output.txt"))
+```
+Moran I statistic: This value measures the degree of spatial autocorrelation. It ranges from -1 to 1.
+- A positive value (0.6431346025) moderate positive spatial autocorrelation, meaning similar values tend to cluster together.
+- A negative value would indicate negative spatial autocorrelation, implying dissimilar values tend to cluster together.
+- A value close to 0 suggests no spatial autocorrelation.
+
+Expectation: This is the expected value of Moran's I under the assumption of spatial randomness. In this case, it's very close to zero, indicating no spatial autocorrelation under the null hypothesis of spatial randomness.
+
+Variance: This measures the variance of the Moran I statistic under spatial randomness.
+
+Standard Deviate and p-value: The standard deviate is a measure of how many standard deviations the observed Moran's I statistic is from the expected Moran's I under spatial randomness. The p-value indicates the significance of the Moran's I statistic.
+Here, the Moran I statistic standard deviate is 27.937, and the p-value is very small (p-value < 2.2e-16), indicating strong evidence against the null hypothesis of spatial randomness.
+
+Overall, the high Moran's I value and low p-value suggest significant positive spatial autocorrelation in the raster data, meaning similar values are clustered together in space.
+--> see ETH slides: https://ethz.ch/content/dam/ethz/special-interest/baug/irl/plus-dam/documents/lehrveranstaltungen/msc/MCDA/Lecture4_criteria_maps.pdf
+or https://geodacenter.github.io/workbook/5a_global_auto/lab5a.html#morans-i
+
+```{r Morans I scatter plot}
+# Plot Moran's I scatter plot
+
+mp <-moran.plot(tot_vul_values, w, zero.policy=attr(w, "zero.policy"), labels=NULL, xlab=NULL, ylab=NULL, quiet=NULL, plot=T)
+
+if (require(ggplot2, quietly=TRUE)) {
+  xname <- attr(mp, "xname")
+  ggplot(mp, aes(x=x, y=wx)) + geom_point(shape=1) + 
+    geom_smooth(formula=y ~ x, method="lm") + 
+    geom_hline(yintercept=mean(mp$wx), lty=2) + 
+    geom_vline(xintercept=mean(mp$x), lty=2) + theme_minimal() + 
+    geom_point(data=mp[mp$is_inf,], aes(x=x, y=wx), shape=9) +
+    geom_text(data=mp[mp$is_inf,], aes(x=x, y=wx, label=labels, vjust=1.5)) +
+    xlab(xname) + ylab(paste0("Spatially lagged ", xname))
+}
+```
+
+## Correlation Matrix
+
+https://rdrr.io/cran/raster/man/layerStats.html
+
+```{r Spatial correlation between vulnerability indicator rasters}
+
+# stack the rasters 
+stack_corr <- stack(soc1_raster, soc2_raster, soc3_raster, soc4_raster, phy1_raster, phy2_raster, phy3_raster, phy4_raster) 
+# Rename the labels of the layers in the raster stack
+names(stack_corr) <- c("SOC1", "SOC2", "SOC3", "SOC4", "PHY1", "PHY2", "PHY3", "PHY4")
+
+stats_corr <- layerStats(stack_corr, 'pearson', na.rm=T)
+corr_matrix <- stats_corr$'pearson correlation coefficient'
+```
+
+```{r Correlation matrix}
+# Calculate significance of correlation: p-value 
+
+# mat : is a matrix of data
+# ... : further arguments to pass to the native R cor.test function
+cor.mtest <- function(mat, ...) {
+    mat <- as.matrix(mat)
+    n <- ncol(mat)
+    p.mat<- matrix(NA, n, n)
+    diag(p.mat) <- 0
+    for (i in 1:(n - 1)) {
+        for (j in (i + 1):n) {
+            tmp <- cor.test(mat[, i], mat[, j], ...)
+            p.mat[i, j] <- p.mat[j, i] <- tmp$p.value
+        }
+    }
+  colnames(p.mat) <- rownames(p.mat) <- colnames(mat)
+  p.mat
+}
+
+# matrix of the p-value of the correlation
+p.mat <- cor.mtest(stack_corr)
+head(p.mat[, 1:5])
+
+
+col <- colorRampPalette(c("#BB4444", "#EE9988", "#FFFFFF", "#77AADD", "#4477AA"))
+
+#png("figs/correlation_plot.png", width = 800, height = 800, res = 150)
+
+corrplot(corr_matrix, method="color", col=col(200),  
+         type="upper", 
+         addCoef.col = "black", # Add coefficient of correlation
+         font.cor = 2,
+         tl.col="black", tl.srt=45, #Text label color and rotation
+         # Combine with significance
+         p.mat = p.mat, sig.level = 0.01, 
+         # correlation coefficient on the principal diagonal
+         diag=T, 
+         # Adjust text properties for coefficients
+         number.cex = 0.75, # Adjust the size of the coefficients
+         mar = c(0,0,2,0) # Adjust margins
+         )
+
+#dev.off()
+```
+This can be used to explain the spatial pattern of the resulting values in the final HFVI map 
+
+## Sensitivity Analysis 
+
+https://zenodo.org/records/11044224 SpatMCDA package for spatial MDCA 
+file:///Users/annikakunz/Documents/Uni/Master/Masterarbeit/R/SpatMCDA/vignettes/SpatMCDA.html 
+
+
+```{r Mapping}
+# SOC
+# Stacking the rasters
+rasters_soc <- raster::stack(
+  soc1_raster,
+  soc2_raster,
+  soc3_raster,
+  soc4_raster)
+
+rasters_soc <- mask(rasters_soc, camp_boundary)
+
+weights_soc <- c(f_weight_soc1, f_weight_soc2, f_weight_soc3, f_weight_soc4) # Fuzzy AHP weights
+
+soc_map <- wlc(rasters = rasters_soc,
+               weight = weights_soc)
+
+# Save the raster
+terra::writeRaster(soc_map, file.path(oatFolder, "soc_map.tif"), filetype = "GTiff", overwrite = TRUE)
+
+# PHY
+# Stacking the rasters
+rasters_phy <- raster::stack(
+  phy1_raster,
+  phy2_raster,
+  phy3_raster,
+  phy4_raster)
+
+rasters_phy <- mask(rasters_phy, camp_boundary)
+
+weights_phy <- c(f_weight_phy1, f_weight_phy2, f_weight_phy3, f_weight_phy4) # Fuzzy AHP weights
+
+phy_map <- wlc(rasters = rasters_phy,
+               weight = weights_phy)
+
+terra::writeRaster(phy_map, file.path(oatFolder, "phy_map.tif"), filetype = "GTiff", overwrite = TRUE)
+```
+
+# OAT: One-at-a-time method 
+
+The "oat" function generates two output result folders in the "output_dir": one folder named "dominant_factor" for outputting all rasters with adjusted weights, and another folder named "dominant_factor_difference" for summarizing the differences between the initial decision map and the rasters with adjusted weights. It also automatically plots all difference maps in the "Plots" window.
+
+Ranges are adjusted to fit the FAHP range between wMIn and wMax:
+
+SOC Fuzzy weights: 
+
+indicator	wMin	wModal	wMax	Defuzzified_w	Norm_Defuzzified_w
+SOC_1	0.2740	0.4033	0.6029	0.4267	0.3971
+SOC_2	0.2234	0.3391	0.5249	0.3625	0.3373
+SOC_3	0.1170	0.1836	0.3011	0.2005	0.1866
+SOC_4	0.0443	0.0737	0.1368	0.0849	0.0790
+
+```{r Fuzzy Weights Range: SOC}
+# Adjusted Fuzzy Weights Range: SOC
+soc1_min <- 0.2740
+soc1_max <- 0.6029
+soc2_min <- 0.2234
+soc2_max <- 0.5249
+soc3_min <- 0.1170
+soc3_max <- 0.3011
+soc4_min <- 0.0443
+soc4_max <- 0.1368
+
+
+# Calculate associated ranges of change: 
+# SOC1
+diff_to_min_soc1 <- (soc1_min - f_weight_soc1) * 100
+diff_to_max_soc1 <- (soc1_max - f_weight_soc1) * 100
+
+range_soc1 <- c(diff_to_min_soc1, diff_to_max_soc1)
+range_soc1
+
+# SOC2
+diff_to_min_soc2 <- (soc2_min - f_weight_soc2) * 100
+diff_to_max_soc2 <- (soc2_max - f_weight_soc2) * 100
+
+range_soc2<- c(diff_to_min_soc2, diff_to_max_soc2)
+range_soc2
+
+# SOC3
+diff_to_min_soc3 <- (soc3_min - f_weight_soc3) * 100
+diff_to_max_soc3 <- (soc3_max - f_weight_soc3) * 100
+
+range_soc3 <- c(diff_to_min_soc3, diff_to_max_soc3)
+range_soc3
+
+# SOC4
+diff_to_min_soc4 <- (soc4_min - f_weight_soc4) * 100
+diff_to_max_soc4 <- (soc4_max - f_weight_soc4) * 100
+
+range_soc4 <- c(diff_to_min_soc4, diff_to_max_soc4)
+range_soc4
+```
+
+PHY Fuzzy weights:
+
+indicator	wMin	wModal	wMax	Defuzzified_w	Norm_Defuzzified_w
+PHY_1	0.1513	0.2947	0.5697	0.3386	0.2962
+PHY_2	0.1497	0.2582	0.4784	0.2954	0.2584
+PHY_3	0.1670	0.3067	0.5762	0.3500	0.3062
+PHY_4	0.0819	0.1406	0.2550	0.1592	0.1393
+
+```{r Fuzzy Weights Range: PHY}
+phy1_min <- 0.1513
+phy1_max <- 0.5697
+phy2_min <- 0.1497
+phy2_max <- 0.4784
+phy3_min <- 0.1670
+phy3_max <- 0.5762
+phy4_min <- 0.0819
+phy4_max <- 0.2550
+
+# Calculate associated ranges of change: 
+# phy1
+diff_to_min_phy1 <- (phy1_min - f_weight_phy1) * 100
+diff_to_max_phy1 <- (phy1_max - f_weight_phy1) * 100
+
+range_phy1 <- c(diff_to_min_phy1, diff_to_max_phy1)
+range_phy1
+
+# phy2
+diff_to_min_phy2 <- (phy2_min - f_weight_phy2) * 100
+diff_to_max_phy2 <- (phy2_max - f_weight_phy2) * 100
+
+range_phy2<- c(diff_to_min_phy2, diff_to_max_phy2)
+range_phy2
+
+# phy3
+diff_to_min_phy3 <- (phy3_min - f_weight_phy3) * 100
+diff_to_max_phy3 <- (phy3_max - f_weight_phy3) * 100
+
+range_phy3<- c(diff_to_min_phy3, diff_to_max_phy3)
+range_phy3
+
+# phy4
+diff_to_min_phy4 <- (phy4_min - f_weight_phy4) * 100
+diff_to_max_phy4 <- (phy4_max - f_weight_phy4) * 100
+
+range_phy4<- c(diff_to_min_phy4, diff_to_max_phy4)
+range_phy4
+```
+
+Next, we perform the sensitivity analysis of the risk map using One-At-a-Time.
+
+The "oat" function generates two output result folders in the "output_dir": one folder named "dominant_factor" for outputting all rasters with adjusted weights, and another folder named "dominant_factor_difference" for summarizing the differences between the initial decision map and the rasters with adjusted weights. It also automatically plots all difference maps in the "Plots" window.
+
+```{r OAT SOC1 / PHY1}
+
+# SOC1
+# Stacking the rasters
+rasters_soc1 <- raster::stack(
+  soc1_raster,
+  soc2_raster,
+  soc3_raster,
+  soc4_raster)
+
+# The order of the weights is aligned with the order of the rasters
+weights <- c("soc1_raster" = f_weight_soc1, 
+             "soc2_raster" = f_weight_soc2,
+             "soc3_raster" = f_weight_soc3,
+             "soc4_raster" = f_weight_soc4)
+
+#Range of weight adjustment (%)
+range <- range_soc1 # Ranges are adjusted to fit the FAHP range between wMIn and wMax 
+
+#Step size of weight adjustment (%)
+step <- 1
+
+#All results are output in out_dir
+oat(rasters = rasters_soc1,
+    weights = weights,
+    dominant_factor = "soc1_raster",
+    range = range,
+    step = step,
+    plot = TRUE,
+    output_dir = oatFolder)
+
+# -------------------------------------------
+# PHY1
+# Stacking the rasters
+rasters_phy1 <- raster::stack(
+  phy1_raster,
+  phy2_raster,
+  phy3_raster,
+  phy4_raster)
+
+# The order of the weights is aligned with the order of the rasters
+weights <- c("phy1_raster" = f_weight_phy1, 
+             "phy2_raster" = f_weight_phy2,
+             "phy3_raster" = f_weight_phy3,
+             "phy4_raster" = f_weight_phy4)
+
+#Range of weight adjustment (%)
+range <- range_phy1
+
+#Step size of weight adjustment (%)
+step <- 1
+
+#All results are output in out_dir
+oat(rasters = rasters_phy1,
+    weights = weights,
+    dominant_factor = "phy1_raster",
+    range = range,
+    step = step,
+    plot = TRUE,
+    output_dir = oatFolder)
+
+#Example: result_-20 =  Results at -20% change in weights
+```
+
+```{r OAT SOC2 / PHY2}
+# Now change dominant factor -> amplifying SOC2 / PHY2 as main
+
+# SOC2
+# Stacking the rasters
+rasters_soc2 <- raster::stack(
+  soc2_raster,
+  soc1_raster,
+  soc3_raster,
+  soc4_raster)
+
+# The order of the weights is aligned with the order of the rasters
+weights <- c("soc2_raster" = f_weight_soc2,
+             "soc1_raster" = f_weight_soc1, 
+             "soc3_raster" = f_weight_soc3,
+             "soc4_raster" = f_weight_soc4)
+
+#Range of weight adjustment (%)
+range <- range_soc2
+
+#Step size of weight adjustment (%)
+step <- 1
+
+#All results are output in out_dir
+oat(rasters = rasters_soc2,
+    weights = weights,
+    dominant_factor = "soc2_raster",
+    range = range,
+    step = step,
+    plot = TRUE,
+    output_dir = oatFolder)
+# ---------------------------------
+# PHY2
+
+# Stacking the rasters
+rasters_phy2 <- raster::stack(
+  phy2_raster,
+  phy1_raster,
+  phy3_raster,
+  phy4_raster)
+
+# The order of the weights is aligned with the order of the rasters
+weights <- c("phy2_raster" = f_weight_phy2,
+             "phy1_raster" = f_weight_phy1, 
+             "phy3_raster" = f_weight_phy3,
+             "phy4_raster" = f_weight_phy4)
+
+#Range of weight adjustment (%)
+range <- range_phy2
+
+#Step size of weight adjustment (%)
+step <- 1
+
+#All results are output in out_dir
+oat(rasters = rasters_phy2,
+    weights = weights,
+    dominant_factor = "phy2_raster",
+    range = range,
+    step = step,
+    plot = TRUE,
+    output_dir = oatFolder)
+```
+
+```{r OAT SOC3 / PHY3}
+# Now change dominant factor -> amplifying SOC3 / PHY3 as main
+
+# SOC
+# Stacking the rasters
+rasters_soc3 <- raster::stack(
+  soc3_raster,
+  soc2_raster,
+  soc1_raster,
+  soc4_raster)
+
+# The order of the weights is aligned with the order of the rasters
+weights <- c("soc3_raster" = f_weight_soc3,
+             "soc2_raster" = f_weight_soc2,
+             "soc1_raster" = f_weight_soc1, 
+             "soc4_raster" = f_weight_soc4)
+
+#Range of weight adjustment (%)
+range <- range_soc3
+
+#Step size of weight adjustment (%)
+step <- 1
+
+#All results are output in out_dir
+oat(rasters = rasters_soc3,
+    weights = weights,
+    dominant_factor = "soc3_raster",
+    range = range,
+    step = step, 
+    plot = TRUE,
+    output_dir = oatFolder)
+
+# ---------------------------------
+# PHY3
+# Stacking the rasters
+rasters_phy3 <- raster::stack(
+  phy3_raster,
+  phy2_raster,
+  phy1_raster,
+  phy4_raster)
+
+# The order of the weights is aligned with the order of the rasters
+weights <- c("phy3_raster" = f_weight_phy3,
+             "phy2_raster" = f_weight_phy2,
+             "phy1_raster" = f_weight_phy1, 
+             "phy4_raster" = f_weight_phy4)
+
+#Range of weight adjustment (%)
+range <- range_phy3
+
+#Step size of weight adjustment (%)
+step <- 1
+
+#All results are output in out_dir
+oat(rasters = rasters_phy3,
+    weights = weights,
+    dominant_factor = "phy3_raster",
+    range = range,
+    step = step, 
+    plot = TRUE,
+    output_dir = oatFolder)
+```
+
+```{r OAT SOC4 / PHY4}
+# Now change dominant factor -> amplifying SOC4 /PHY4 as main
+
+# SOC4
+# Stacking the rasters
+rasters_soc4 <- raster::stack(
+  soc4_raster,
+  soc3_raster,
+  soc2_raster,
+  soc1_raster)
+
+# The order of the weights is aligned with the order of the rasters
+weights <- c("soc4_raster" = f_weight_soc4,
+             "soc3_raster" = f_weight_soc3,
+             "soc2_raster" = f_weight_soc2,
+             "soc1_raster" = f_weight_soc1)
+
+#Range of weight adjustment (%)
+range <- range_soc4
+
+#Step size of weight adjustment (%)
+step <- 1
+
+#All results are output in out_dir
+oat(rasters = rasters_soc4,
+    weights = weights,
+    dominant_factor = "soc4_raster",
+    range = range,
+    step = step,
+    plot = TRUE,
+    output_dir = oatFolder)
+
+# -------------------------------
+# SOC4
+
+# Stacking the rasters
+rasters_phy4 <- raster::stack(
+  phy4_raster,
+  phy3_raster,
+  phy2_raster,
+  phy1_raster)
+
+# The order of the weights is aligned with the order of the rasters
+weights <- c("phy4_raster" = f_weight_phy4,
+             "phy3_raster" = f_weight_phy3,
+             "phy2_raster" = f_weight_phy2,
+             "phy1_raster" = f_weight_phy1)
+
+#Range of weight adjustment (%)
+range <- range_phy4
+
+#Step size of weight adjustment (%)
+step <- 1
+
+#All results are output in out_dir
+oat(rasters = rasters_phy4,
+    weights = weights,
+    dominant_factor = "phy4_raster",
+    range = range,
+    step = step,
+    plot = TRUE,
+    output_dir = oatFolder)
+```
+
+# Mean of absolute change rates (MACR)
+Next, let's calculate the absolute average rate of change for all factors together!
+
+
+```{r MACR SOC1 / PHY 1}
+# SOC1
+
+# Read the results of the One-Factor-a-Time analysis for factor soc1
+soc1Folder <- file.path(oatFolder, "soc1_raster")  # Path to soc1_raster folder
+oat_rasters_soc1 <- raster::stack(dir(soc1Folder, full.names = TRUE))
+
+# Read the soc vulnerability map obtained with the weighted linear combination
+wlc_raster_soc <- raster::raster(file.path(oatFolder, "soc_map.tif"))
+
+# Set the output directory for MACR results
+output_dir <- macrFolder
+
+# Run the MACR function
+macr_soc1 <- macr(
+  oat_rasters = oat_rasters_soc1,
+  wlc_raster = wlc_raster_soc,
+  output_dir = output_dir,
+  factor_name = "soc1_raster"
+)
+
+# -------------------------
+# PHY1
+
+# Read the results of the One-Factor-a-Time analysis for factor phy1
+phy1Folder <- file.path(oatFolder, "phy1_raster")  # Path to phy1_raster folder
+oat_rasters_phy1 <- raster::stack(dir(phy1Folder, full.names = TRUE))
+
+# Read the phy vulnerability map obtained with the weighted linear combination
+wlc_raster_phy <- raster::raster(file.path(oatFolder, "phy_map.tif"))
+
+# Set the output directory for MACR results
+output_dir <- macrFolder
+
+# Run the MACR function
+macr_phy1 <- macr(
+  oat_rasters = oat_rasters_phy1,
+  wlc_raster = wlc_raster_phy,
+  output_dir = output_dir,
+  factor_name = "phy1_raster"
+)
+```
+
+Subsequently, let's calculate the mean of absolute change rates for the missing indicators. As shown in the process above, MACRs were calculated for each of the remaining 3 factors as shown in the process above.
+
+```{r MACR}
+# -------------------------
+# SOC
+
+# SOC2
+# Define the folder path for SOC2 relative to the working directory
+soc2Folder <- file.path(oatFolder, "soc2_raster")
+oat_rasters_soc2 <- raster::stack(dir(soc2Folder, full.names = TRUE))
+
+# Run the MACR function for SOC2
+macr_soc2 <- macr(
+  oat_rasters = oat_rasters_soc2,
+  wlc_raster = wlc_raster_soc,
+  output_dir = file.path(macrFolder),  # Output directory
+  factor_name = "soc2_raster"
+)
+
+# SOC3
+soc3Folder <- file.path(oatFolder, "soc3_raster")
+oat_rasters_soc3 <- raster::stack(dir(soc3Folder, full.names = TRUE))
+
+# Run the MACR function for SOC3
+macr_soc3 <- macr(
+  oat_rasters = oat_rasters_soc3,
+  wlc_raster = wlc_raster_soc,
+  output_dir = file.path(macrFolder),  # Output directory
+  factor_name = "soc3_raster"
+)
+
+# SOC4
+soc4Folder <- file.path(oatFolder, "soc4_raster")
+oat_rasters_soc4 <- raster::stack(dir(soc4Folder, full.names = TRUE))
+
+# Run the MACR function for SOC4
+macr_soc4 <- macr(
+  oat_rasters = oat_rasters_soc4,
+  wlc_raster = wlc_raster_soc,
+  output_dir = file.path(macrFolder),  # Output directory
+  factor_name = "soc4_raster"
+)
+
+# --------------------
+# PHY
+
+# PHY2
+phy2Folder <- file.path(oatFolder, "phy2_raster")
+oat_rasters_phy2 <- raster::stack(dir(phy2Folder, full.names = TRUE))
+
+# Run the MACR function for PHY2
+macr_phy2 <- macr(
+  oat_rasters = oat_rasters_phy2,
+  wlc_raster = wlc_raster_phy,
+  output_dir = file.path(macrFolder),  # Output directory
+  factor_name = "phy2_raster"
+)
+
+# PHY3
+phy3Folder <- file.path(oatFolder, "phy3_raster")
+oat_rasters_phy3 <- raster::stack(dir(phy3Folder, full.names = TRUE))
+
+# Run the MACR function for PHY3
+macr_phy3 <- macr(
+  oat_rasters = oat_rasters_phy3,
+  wlc_raster = wlc_raster_phy,
+  output_dir = file.path(macrFolder),  # Output directory
+  factor_name = "phy3_raster"
+)
+
+# PHY4
+phy4Folder <- file.path(oatFolder, "phy4_raster")
+oat_rasters_phy4 <- raster::stack(dir(phy4Folder, full.names = TRUE))
+
+# Run the MACR function for PHY4
+macr_phy4 <- macr(
+  oat_rasters = oat_rasters_phy4,
+  wlc_raster = wlc_raster_phy,
+  output_dir = file.path(macrFolder),  # Output directory
+  factor_name = "phy4_raster"
+)
+```
+
+Let's plot the values of the MACRs for all factors together next!
+
+```{r Read all MACR csv}
+# SOC
+# List of file paths: SOC
+file_paths_soc <- c(
+  file.path(macrFolder, "soc1_raster", "soc1_raster_macr.csv"),
+  file.path(macrFolder, "soc2_raster", "soc2_raster_macr.csv"),
+  file.path(macrFolder, "soc3_raster", "soc3_raster_macr.csv"),
+  file.path(macrFolder, "soc4_raster", "soc4_raster_macr.csv")
+)
+
+# Function to process each file
+process_file <- function(file_path) {
+  df <- read.csv(file_path)  # Read the CSV file
+  # Convert values in the column "CRW" to numeric based on the pattern
+  df$CRW <- as.numeric(ifelse(
+    str_detect(df$CRW, "^result_\\."),
+    -as.numeric(str_replace(df$CRW, "^result_\\.", "")),
+    as.numeric(str_replace(df$CRW, "^result_", ""))
+  ))
+  # Rename columns
+  names(df)[which(names(df) == "Factor_Name")] <- "Variable"
+  names(df)[which(names(df) == "MACRs")] <- "Value"
+  return(df)
+}
+
+file_paths_soc
+getwd()
+
+# Apply the function to each file
+processed_dfs_soc <- lapply(file_paths_soc, process_file)
+
+# Combine all data frames into one
+MACR_soc <- do.call(rbind, processed_dfs_soc)
+
+# ----------------------
+# PHY
+# List of file paths: PHY
+file_paths_phy <- c(
+  file.path(macrFolder, "phy1_raster", "phy1_raster_macr.csv"),
+  file.path(macrFolder, "phy2_raster", "phy2_raster_macr.csv"),
+  file.path(macrFolder, "phy3_raster", "phy3_raster_macr.csv"),
+  file.path(macrFolder, "phy4_raster", "phy4_raster_macr.csv")
+)
+
+# Apply the function to each file
+processed_dfs_phy <- lapply(file_paths_phy, process_file)
+
+# Combine all data frames into one
+MACR_phy <- do.call(rbind, processed_dfs_phy)
+
+```
+
+
+```{r Read all MACR csv}
+
+# SOC
+# List of file paths: SOC
+file_paths_soc <- c("~/Documents/Uni/Master/Masterarbeit/R/OAT/MACR/soc1_raster/soc1_raster_macr.csv",
+                "~/Documents/Uni/Master/Masterarbeit/R/OAT/MACR/soc2_raster/soc2_raster_macr.csv",
+                "~/Documents/Uni/Master/Masterarbeit/R/OAT/MACR/soc3_raster/soc3_raster_macr.csv",
+                "~/Documents/Uni/Master/Masterarbeit/R/OAT/MACR/soc4_raster/soc4_raster_macr.csv")
+
+# Function to process each file
+process_file <- function(file_path) {
+  df <- read.csv(file_path)  # Read the CSV file
+  # Convert values in the column "CRW" to numeric based on the pattern
+  df$CRW <- as.numeric(ifelse(str_detect(df$CRW, "^result_\\."), 
+                              -as.numeric(str_replace(df$CRW, "^result_\\.", "")), 
+                              as.numeric(str_replace(df$CRW, "^result_", ""))))
+  # Rename columns
+  names(df)[which(names(df) == "Factor_Name")] <- "Variable"
+  names(df)[which(names(df) == "MACRs")] <- "Value"
+  return(df)
+}
+
+# Apply the function to each file
+processed_dfs_soc <- lapply(file_paths_soc, process_file)
+
+# Combine all data frames into one
+MACR_soc <- do.call(rbind, processed_dfs_soc)
+
+# ----------------------
+# PHY
+# List of file paths: PHY
+file_paths_phy <- c("~/Documents/Uni/Master/Masterarbeit/R/OAT/MACR/phy1_raster/phy1_raster_macr.csv",
+                "~/Documents/Uni/Master/Masterarbeit/R/OAT/MACR/phy2_raster/phy2_raster_macr.csv",
+                "~/Documents/Uni/Master/Masterarbeit/R/OAT/MACR/phy3_raster/phy3_raster_macr.csv",
+                "~/Documents/Uni/Master/Masterarbeit/R/OAT/MACR/phy4_raster/phy4_raster_macr.csv")
+
+# Function to process each file
+process_file <- function(file_path) {
+  df <- read.csv(file_path)  # Read the CSV file
+  # Convert values in the column "CRW" to numeric based on the pattern
+  df$CRW <- as.numeric(ifelse(str_detect(df$CRW, "^result_\\."), 
+                              -as.numeric(str_replace(df$CRW, "^result_\\.", "")), 
+                              as.numeric(str_replace(df$CRW, "^result_", ""))))
+  # Rename columns
+  names(df)[which(names(df) == "Factor_Name")] <- "Variable"
+  names(df)[which(names(df) == "MACRs")] <- "Value"
+  return(df)
+}
+
+# Apply the function to each file
+processed_dfs_phy <- lapply(file_paths_phy, process_file)
+
+# Combine all data frames into one
+MACR_phy <- do.call(rbind, processed_dfs_phy)
+
+```
+
+```{r}
+plot_macr(MACR_soc)
+plot_macr(MACR_phy)
+```
+
+```{r}
+
+# Custom labels for SOC variables
+soc_custom_labels <- c(
+  "soc1_raster" = "SOC1",
+  "soc2_raster" = "SOC2",
+  "soc3_raster" = "SOC3",
+  "soc4_raster" = "SOC4"
+)
+
+phy_custom_labels <- c(
+  "phy1_raster" = "PHY1",
+  "phy2_raster" = "PHY2",
+  "phy3_raster" = "PHY3",
+  "phy4_raster" = "PHY4"
+)
+
+# Plot the data
+macr_soc <- ggplot(MACR_soc, aes(x = CRW, y = Value, color = Variable)) +
+  geom_line() +
+  geom_point() +
+  theme_minimal() +
+  labs(title = "SOC Indicators",
+       x = "Change rate of weights (CWR) [%]",
+       y = " Mean Absolute Change Rates (MACR) [%]",
+       color = "Variable") +
+  theme(axis.text.x = element_text(hjust = 1)) +
+  scale_color_manual(values = soc_custom_labels) +
+  scale_color_manual(values = c("#a6cee3", "#1f78b4", "#b2df8a", "#33a02c"), labels = soc_custom_labels)
+
+macr_phy <- ggplot(MACR_phy, aes(x = CRW, y = Value, color = Variable)) +
+  geom_line() +
+  geom_point() +
+  theme_minimal() +
+  labs(title = "PHY Indicators",
+       x = "Change rate of weights (CWR) [%]",
+       y = "Mean Absolute Change Rates (MACR) [%]",
+       color = "Variable") +
+  theme(axis.text.x = element_text(hjust = 1)) +
+  scale_color_manual(values = c("#a6cee3", "#1f78b4", "#b2df8a", "#33a02c"), labels = phy_custom_labels)
+
+# Arrange the plots next to each other
+macr <- grid.arrange(macr_soc, macr_phy, ncol = 2)
+ggsave(file.path(figureFolder, "macr_plots.png"), plot = macr, width = 10, height = 5, dpi = 300)
+```
+
+Interpretation: as done in Chen et al., (2010)
+
+# Uncertainty Map
+Finally, let's put together all the  maps (all maps in all folders named "domain_factor" in the "oat" folder.) with adjusted weights. Let's calculate the uncertainty map.
+
+To do so, first, we have to store all result tiffs from the individual indicators into the folders "unc_map_phy" and "unc_map_soc"
+
+
+```{r Folder structure}
+# Define the base directory (adjust to your folder path)
+base_dir <- macrFolder
+
+# Define the source folders and the target folders for SOC and PHY
+source_folders <- list.dirs(macrFolder, full.names = TRUE, recursive = TRUE)
+target_phy <- file.path(macrFolder, "unc_map_phy")
+target_soc <- file.path(macrFolder, "unc_map_soc")
+
+# Create target directories
+dir_create(target_phy)
+dir_create(target_soc)
+
+# Process files in each source folder
+for (folder in source_folders) {
+  # Skip the base directory
+  if (folder == base_dir) next
+
+  # List all TIFF files in the folder
+  tiff_files <- dir_ls(folder, glob = "*.tif")
+
+  # Check if the folder corresponds to PHY or SOC
+  if (grepl("phy", basename(folder))) {
+    # Rename and move PHY files
+    for (file in tiff_files) {
+      new_name <- paste0("phy", "_", basename(file))
+      file_move(file, file.path(target_phy, new_name))
+    }
+  } else if (grepl("soc", basename(folder))) {
+    # Rename and move SOC files
+    for (file in tiff_files) {
+      new_name <- paste0("soc", "_", basename(file))
+      file_move(file, file.path(target_soc, new_name))
+    }
+  }
+}
+
+# Print completion message
+cat("Files have been renamed and moved successfully!")
+```
+
+
+```{r Uncertainty Map}
+
+# SOC
+# Create uncertainty map 
+soc_results <- terra::rast(dir(file.path(macrFolder, "unc_map_soc"),full.names = TRUE))
+uncertainty_soc <- uncertain(soc_results)
+
+# Normalize
+uncertainty_soc <- normalize(uncertainty_soc)
+
+# Create the tm_plot object for the uncertainty map
+soc_uncertainty <- tm_shape(uncertainty_soc) +
+  tm_raster(palette = "plasma",
+            style = "cont",
+            title = "SOC Uncertainty")+
+  tm_shape(camp_boundary) +
+  tm_borders() 
+
+# Convert to RasterLayer
+uncertainty_soc <- as(raster::raster(uncertainty_soc), "RasterLayer")
+
+# Replace NA values with 0 for SOC
+uncertainty_soc[is.na(uncertainty_soc)] <- 0
+
+# Applying low-pass filter
+un_soc_smoothed <- focal(uncertainty_soc, w = lowpass, fun=mean, na.rm = TRUE) %>%
+  mask(., camp_boundary)
+
+# Normalize
+un_soc_smoothed <- normalize(un_soc_smoothed)
+
+# Plotting
+# Create the tm_plot object for the uncertainty map
+soc_uncertainty_smoothed <- tm_shape(un_soc_smoothed) +
+  tm_raster(palette = "plasma",
+            style = "cont",
+            title = "SOC Uncertainty") +
+  tm_shape(camp_boundary) +
+  tm_borders() 
+
+# ---------------------
+# PHY
+# Create uncertainty map 
+phy_results <- terra::rast(dir(file.path(macrFolder,"unc_map_phy"),full.names = TRUE))
+uncertainty_phy <- uncertain(phy_results)
+
+# Normalize
+uncertainty_phy <- normalize(uncertainty_phy)
+
+# Create the tm_plot object for the uncertainty map
+phy_uncertainty <- tm_shape(uncertainty_phy) +
+  tm_raster(palette = "plasma",
+            style = "cont",
+            title = "PHY Uncertainty") +
+  tm_shape(camp_boundary) +
+  tm_borders() 
+
+# Convert to RasterLayer
+uncertainty_phy <- as(raster::raster(uncertainty_phy), "RasterLayer")
+
+# Replace NA values with 0 for SOC
+uncertainty_phy[is.na(uncertainty_phy)] <- 0
+
+# Applying smoothing filter
+un_phy_smoothed <- focal(uncertainty_phy, w = lowpass, fun=mean, na.rm = TRUE) %>%
+  mask(., camp_boundary)
+
+# Normalize
+un_phy_smoothed <- normalize(un_phy_smoothed)
+
+# Plotting
+# Create the tm_plot object for the uncertainty map
+phy_uncertainty_smoothed <- tm_shape(un_phy_smoothed) +
+  tm_raster(palette = "plasma",
+            style = "cont",
+            title = "PHY Uncertainty") +
+  tm_shape(camp_boundary) +
+  tm_borders() 
+
+# Plot the object
+uncertainty_soc_phy <- tmap_arrange(soc_uncertainty, phy_uncertainty)
+tmap_arrange(soc_uncertainty_smoothed, phy_uncertainty_smoothed)
+
+tmap_save(uncertainty_soc_phy, file.path(figureFolder, "uncertainty_soc_phy.png"), width = 10, height = 5)
+```
+
+```{r Overlay Uncertainty Layers}
+# Weighted linear overlay
+overlay_unc <- (uncertainty_soc * 0.5) + (uncertainty_phy * 0.5)
+overlay_unc <- normalize(overlay_unc)
+
+smoothed_overlay_unc <- (un_soc_smoothed * 0.5) + (un_phy_smoothed * 0.5)
+smoothed_overlay_unc <- normalize(smoothed_overlay_unc)
+```
+
+```{r Mapping combined uncertainty map}
+smoothed_overlay_unc <- mask(smoothed_overlay_unc, camp_boundary)
+
+tm_uncertainty_smoothed <- tm_shape(smoothed_overlay_unc) +
+  tm_raster(palette = "plasma",
+            style = "cont",
+            title = "Index Uncertainty")
+
+tm_uncertainty_smoothed
+```
+
+```{r Mapping Uncertainty}
+# Set tmap mode to plotting
+tmap_mode("plot")
+
+# Smoothed 
+# Basemap
+bbox_camp
+osm_map <- read_osm(bbox_camp)
+
+# Define breaks and labels for the legend
+breaks <- seq(0, 1, by = 0.2)
+
+tm_unc_smoothed <- tm_shape(osm_map) + 
+  tm_rgb(alpha = 0.6) +  # Adjust transparency of the OSM map
+  tm_layout(legend.position = c("left", "bottom"), frame = FALSE) +  # Adjust legend position and remove frame
+  tm_shape(smoothed_overlay_unc) +
+  tm_raster(palette = "plasma", 
+            style = "cont", 
+            title = "Uncertainty Value", 
+            alpha = 0.6, 
+            legend.hist = TRUE) + 
+  tm_shape(camp_boundary) +
+  tm_borders() +
+  tm_scale_bar(position = c("left", "bottom")) +  # Add scale bar
+  tm_compass(type="arrow", position=c(0, .2)) +  # Add compass
+  
+  tm_layout(title = "HFVI Weight Uncertainty Map - Smoothed",  # Add title
+            title.position = c("left", "top"),  # Adjust title position
+            title.size = 1.5,
+            title.fontface = "bold",
+            legend.hist.size = 1,
+            legend.hist.width = 0.6) + # Adjust title size
+  
+  tm_layout(legend.show = TRUE,
+            legend.title.color = "black",
+            legend.title.size = 0.9,
+            legend.position = c("left", "bottom"),
+            legend.text.color = "black")   # Adjust legend colors 
+
+tm_unc_smoothed
+```
+
+
+```{r Export and save raster}
+writeRaster(overlay_unc, file.path(figureFolder, "unc_raster.tif"), overwrite=TRUE)
+writeRaster(smoothed_overlay_unc, file.path(figureFolder, "unc_raster_smoothed.tif"), overwrite=TRUE)
+tmap_save(tm_unc_smoothed, file.path(figureFolder, "unc_map_smoothed.png"), width = 7, height = 5)
+```
+
+```{r Final Maps}
+tmap_arrange(tm_soc_smoothed, soc_uncertainty_smoothed, tm_phy_smoothed, phy_uncertainty_smoothed, nrow = 2)
+tmap_arrange(tm_f_vul_smoothed, tm_unc_smoothed, nrow = 1)
+```
+
+## Interpretation of WLC Vulnerability Mapping and OAT Weight Sensitivity Analysis 
+
+*vulnerability Mapping with WLC:*
+- The weighted linear combination (WLC) method is used to combine various raster layers representing vulnerability indicators using predefined weights.
+- The resulting vulnerability represents the aggregated vulnerability level across all factors, with higher values indicating higher vulnerability.
+
+*Sensitivity Analysis with OAT:*
+- The One-At-a-Time (OAT) sensitivity analysis is performed by systematically adjusting the weights of individual factors while keeping the others constant. 
+- Each factor is considered as the dominant factor, and its weight is adjusted within a specified range (depending on the fuzzy weights range) in steps of 1%.
+- The output includes raster layers representing the vulnerability maps with adjusted weights for each factor (e.g., "result_-20" represents the vulnerability map with a 20% decrease in the weight of the dominant factor).
+- The Mean of Absolute Change Rates (MACRs) quantifies the average rate of change across all factors, providing insights into the sensitivity of the overall vulnerability map to changes in individual factor weights.
+
+*Uncertainty Map:*
+The uncertainty map is generated by combining all vulnerability maps with adjusted weights from the OAT analysis. It represents the variability or uncertainty in the vulnerability assessment due to changes in factor weights.
+
+*Interpretation:*
+Interpretation of the results involves analyzing how changes in the weights of individual factors impact the overall vulnerability map. Factors with higher sensitivity (larger changes in vulnerability map output for small changes in weight) may be considered more influential in driving the overall vulnerability assessment. The uncertainty map provides insights into the stability and reliability of the vulnerability assessment, considering variations in factor weights.
+
+*Further interpretation:*
+
+Spatial Distribution: The uncertainty map will display spatial patterns indicating areas where changes in criteria weights have the most significant impact on the final result. Different regions on the map will show varying levels of uncertainty based on the sensitivity of the model to changes in criteria weights.
+
+Magnitude of Uncertainty: The magnitude of uncertainty at each location on the map represents the degree of sensitivity of the model to changes in criteria weights. Higher uncertainty values indicate that small variations in criteria weights lead to significant changes in the final outcome, while lower uncertainty values suggest more robustness to changes in criteria weights.
+
+Identifying Sensitive Areas: Areas with high uncertainty values indicate regions where decision-making might be more uncertain or where additional data or analysis may be necessary to make informed decisions. These areas could be considered 'hotspots' of uncertainty, requiring closer examination or further refinement of the MCA model.
+
+Model Robustness: The overall pattern of the uncertainty map can provide insights into the robustness of your MCA model. If the uncertainty is uniformly distributed across the study area, it may suggest that the model is relatively insensitive to variations in criteria weights and thus more robust. Conversely, if certain regions exhibit significantly higher uncertainty, it may indicate areas where the model is less reliable and more sensitive to changes in criteria weights.
+
+Decision Support: The uncertainty map can aid decision-makers by highlighting areas where uncertainty is high, allowing them to prioritize resources or further investigation in those regions. It also provides transparency regarding the reliability of the MCA model, helping stakeholders make more informed decisions based on the level of uncertainty associated with the results.
+
+Overall, the final uncertainty map derived from the OAT sensitivity analysis provides valuable information about the robustness and reliability of your MCA model, allowing for more informed decision-making in spatial planning and resource management contexts.
+
+```{r Map overlay of HFVI and uncertainties}
+
+# Load your raster data
+tot_f_vul_raster_smoothed
+smoothed_overlay_unc
+
+# Convert rasters to data frames
+hfvi_df <- as.data.frame(tot_f_vul_raster_smoothed, xy = TRUE)
+uncertainty_df <- as.data.frame(smoothed_overlay_unc, xy = TRUE)
+
+# Rename columns for clarity
+colnames(hfvi_df) <- c("x", "y", "HFVI")
+colnames(uncertainty_df) <- c("x", "y", "Uncertainty")
+
+# Convert data frames to sf objects
+hfvi_sf <- st_as_sf(hfvi_df, coords = c("x", "y"), crs = st_crs(camp_boundary))
+uncertainty_sf <- st_as_sf(uncertainty_df, coords = c("x", "y"), crs = st_crs(camp_boundary))
+
+# Clip the sf objects to the camp_boundary
+hfvi_clipped <- st_intersection(hfvi_sf, camp_boundary)
+uncertainty_clipped <- st_intersection(uncertainty_sf, camp_boundary)
+
+# Convert back to data frames for ggplot
+hfvi_clipped_df <- as.data.frame(st_coordinates(hfvi_clipped))
+hfvi_clipped_df$HFVI <- hfvi_clipped$HFVI
+
+uncertainty_clipped_df <- as.data.frame(st_coordinates(uncertainty_clipped))
+uncertainty_clipped_df$Uncertainty <- uncertainty_clipped$Uncertainty
+
+# Merge clipped data frames by coordinates
+combined_df <- left_join(hfvi_clipped_df, uncertainty_clipped_df, by = c("X", "Y"))
+
+# Normalize uncertainty values to range [0, 1] for saturation
+combined_df <- combined_df %>%
+  mutate(Uncertainty_normalized = scales::rescale(Uncertainty, to = c(0, 1)))
+
+# Create the plot
+ggplot(combined_df) +
+  geom_raster(aes(x = X, y = Y, fill = HFVI, alpha = Uncertainty_normalized)) +
+  scale_fill_gradientn(name = "HFVI", colors = brewer.pal(9, "YlOrRd")) +
+  scale_alpha_continuous(name = "Uncertainty", range = c(0.1, 1)) + # Ensuring a suitable range for transparency
+  coord_equal() +
+  theme_void() +  # Remove the gray background and other default plot elements
+  labs(title = "Overlay of HFVI and Uncertainty",
+       subtitle = "Hue represents HFVI, Saturation represents Uncertainty")
+
+```
+
+
+
+

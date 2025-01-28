@@ -106,15 +106,13 @@ macrFolder <- file.path(resultsFolder, "macr")  # Path to MACR folder
 # Run this for the demonstration of the code using the extracts provided for the fictional camp. For the google buidlings, we provided an extract which is already intersected with the camp boundary due to long run times when loading the whole Google buildings dataset. When implementing another refugee camp, load the full dataset as described in the ReadMe file
 
 # OSM roads extract
-
-# Load global shapefiles
-data_osm_roads <- st_read(file.path(shpGlobalFolder, "osm_roads/gis_osm_roads_free_1.shp")) %>%
+# Read created camp roads intersection shapefile 
+data_osm_roads <- st_read(file.path(shpGlobalFolder, "osm_roads/camp_roads_osm.shp")) %>%
   st_set_crs(crs_wgs84) %>%  # Assign EPSG:4326
   st_transform(crs = crs_utm)  # Transform to UTM Zone 
 
 # Google Buildings extract
-
-# Read created camp buidlings intersection shapefile 
+# Read created camp buildings intersection shapefile 
 camp_buildings <- st_read(file.path(shpGlobalFolder, "google_buildings/camp_buildings_cut.shp")) %>%
   st_transform(crs = crs_utm)
 ```

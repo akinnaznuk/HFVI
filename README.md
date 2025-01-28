@@ -1,6 +1,6 @@
 # Humanitarian Flood Vulnerability Index (HFVI): Weight calculation and Case Study Application & Analysis
 
-This repository contains all the materials, data, and scripts required to reproduce the Humanitarian Flood Vulnerability Index (HFVI), supporting the publication "Developing a Spatially Explicit Humanitarian Flood Vulnerability Index for Refugee Camps using Fuzzy Multi-Criteria Decision Analysis" and contains the files for the Analytical Hierarchy Process (AHP), Fuzzy Analytical Hierarchy Process (FAHP), and the Humanitarian Fuzzy Vulnerability Index (HFVI) applied to the a refugee camp using synthetic data. 
+This repository (HFVI.zip) contains all the materials, data, and scripts required to reproduce the Humanitarian Flood Vulnerability Index (HFVI), supporting the publication "Developing a Spatially Explicit Humanitarian Flood Vulnerability Index for Refugee Camps using Fuzzy Multi-Criteria Decision Analysis". It contains the files for the Analytical Hierarchy Process (AHP), Fuzzy Analytical Hierarchy Process (FAHP), and the geospatial Humanitarian Fuzzy Vulnerability Index (HFVI) calculation applied to a refugee camp using synthetic data. 
 
 ## Overview
 This repository contains three main scripts, each performing a specific part of the workflow:

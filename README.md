@@ -11,6 +11,7 @@ This repository contains three main scripts, each performing a specific part of 
 
 ## Repository Structure
 
+```
 hfvi_project/
 ├── README.md               # Project description and instructions
 ├── data/                   # Input data
@@ -32,6 +33,7 @@ hfvi_project/
 │
 ├── documentation/          # Supporting documents
 │   ├── methodology.pdf     # Methodological overview
+```
 
 ## Data 
 ### Input Data

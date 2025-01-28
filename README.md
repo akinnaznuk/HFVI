@@ -13,26 +13,26 @@ This repository contains three main scripts, each performing a specific part of 
 
 ```
 hfvi_project/
-├── README.md               # Project description and instructions
-├── data/                   # Input data
-│   ├── ahp/                # Analytical Hierarchy Process calculations
-│   ├── shp/                # Geospatial shapefiles
-│   │   ├── global/         # Global datasets
-│   │   ├── local/          # Local datasets (synthetic data)
+├── README.md               	# Project description and instructions
+├── data/                  	# Input data
+│   ├── ahp/                	# Analytical Hierarchy Process calculations
+│   ├── shp/                	# Geospatial shapefiles
+│   │   ├── global/         	# Global datasets
+│   │   ├── local/          	# Local datasets (synthetic data)
 │
-├── scripts/                # Scripts for analysis
-│   ├── AHP_analysis.Rmd    # Analytical Hierarchy Process calculations
-│   ├── FAHP_analysis.Rmd   # Fuzzy Analytical Hierarchy Process calculations
-│   ├── HFVI_calculation.Rmd # HFVI computation and spatial analysis
-│   ├── .Rproj              # RStudio project file
+├── scripts/                	# Scripts for analysis
+│   ├── AHP_analysis.Rmd    	# Analytical Hierarchy Process calculations
+│   ├── FAHP_analysis.Rmd   	# Fuzzy Analytical Hierarchy Process calculations
+│   ├── HFVI_calculation.Rmd 	# HFVI computation and spatial analysis
+│   ├── .Rproj              	# RStudio project file
 │
-├── outputs/                # Analysis results and outputs
-│   ├── oat/                # Files stored from the OAT-FAHP approach
-│   ├── figures/            # Visualizations (plots, maps, etc.)
-│   ├── results/            # Final results and tables
+├── outputs/                	# Analysis results and outputs
+│   ├── oat/                	# Files stored from the OAT-FAHP approach
+│   ├── figures/            	# Visualizations (plots, maps, etc.)
+│   ├── results/            	# Final results and tables
 │
-├── documentation/          # Supporting documents
-│   ├── methodology.pdf     # Methodological overview
+├── documentation/          	# Supporting documents
+│   ├── methodology.pdf     	# Methodological overview
 ```
 
 ## Data 

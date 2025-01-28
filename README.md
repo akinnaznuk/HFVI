@@ -12,10 +12,10 @@ This repository contains three main scripts, each performing a specific part of 
 ## Repository Structure
 
 hfvi_project/
-|
-├── README.md              			# Project description and instructions
-├── data/                  			# Input data
-│   ├── ahp/...   					    # Analytical Hierarchy Process calculations
+
+- README.md              			# Project description and instructions
+- data/                  			# Input data
+- 	ahp/...   					    # Analytical Hierarchy Process calculations
 │   ├── shp/   					        # Geospatial shapefiles
 │   	├── global/..					    # Global datasets
 │   	├── local/..					    # Local datasets (synthetic data)

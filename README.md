@@ -162,4 +162,4 @@ Expected Execution Times:
 
 
 ## Credits
-Kunz, Annika. (2024). "Developing a Spatially Explicit Humanitarian Flood Vulnerability Index for Refugee Camps using Fuzzy Multi-Criteria Decision Analysis". GitHub repository. https://github.com/akinnaznuk/HFVI
+Anonymous. (2025). "Computational Workflow and Data for Developing a Flood Vulnerability Index for Refugee Camps Using Fuzzy Multi-Criteria Decision Analysis". GitHub repository. https://github.com/akinnaznuk/HFVI

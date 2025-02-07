@@ -31,7 +31,6 @@ check_pkg <- function(x)
 
 check_pkg("sf")
 check_pkg("httr")
-check_pkg("rgdal")
 check_pkg("readxl")
 check_pkg("ggplot2")
 check_pkg("plotly")

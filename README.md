@@ -128,7 +128,6 @@ RColorBrewer : 1.1-3
 raster : 3.6-26
 readr : 2.1.3
 readxl : 1.4.1
-rgdal : 1.5-32
 sf : 1.0-15
 spatialEco : 1.3-7
 spatstat : 2.3-4
@@ -138,7 +137,6 @@ stringr : 1.5.1
 terra : 1.7-65
 tidyverse : 1.3.2
 tmap : 3.3-3
-tmaptools : 3.1-1
 XML : 3.99-0.11
 xtable : 1.8-4
 zoo : 1.8-12

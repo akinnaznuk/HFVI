@@ -37,7 +37,6 @@ check_pkg <- function(x)
 
 check_pkg("sf")
 check_pkg("httr")
-check_pkg("rgdal")
 check_pkg("ggplot2")
 check_pkg("plotly")
 check_pkg("tidyverse")
@@ -56,7 +55,6 @@ check_pkg("zoo")
 check_pkg("RColorBrewer")
 check_pkg("spatstat")
 check_pkg("here")
-check_pkg("maptools")
 check_pkg("arrow") #feather.R
 check_pkg("raster")
 check_pkg("terra")
@@ -2282,64 +2280,6 @@ file_paths_phy <- c(
   file.path(macrFolder, "phy3_raster", "phy3_raster_macr.csv"),
   file.path(macrFolder, "phy4_raster", "phy4_raster_macr.csv")
 )
-
-# Apply the function to each file
-processed_dfs_phy <- lapply(file_paths_phy, process_file)
-
-# Combine all data frames into one
-MACR_phy <- do.call(rbind, processed_dfs_phy)
-
-```
-
-
-```{r Read all MACR csv}
-
-# SOC
-# List of file paths: SOC
-file_paths_soc <- c("~/Documents/Uni/Master/Masterarbeit/R/OAT/MACR/soc1_raster/soc1_raster_macr.csv",
-                "~/Documents/Uni/Master/Masterarbeit/R/OAT/MACR/soc2_raster/soc2_raster_macr.csv",
-                "~/Documents/Uni/Master/Masterarbeit/R/OAT/MACR/soc3_raster/soc3_raster_macr.csv",
-                "~/Documents/Uni/Master/Masterarbeit/R/OAT/MACR/soc4_raster/soc4_raster_macr.csv")
-
-# Function to process each file
-process_file <- function(file_path) {
-  df <- read.csv(file_path)  # Read the CSV file
-  # Convert values in the column "CRW" to numeric based on the pattern
-  df$CRW <- as.numeric(ifelse(str_detect(df$CRW, "^result_\\."), 
-                              -as.numeric(str_replace(df$CRW, "^result_\\.", "")), 
-                              as.numeric(str_replace(df$CRW, "^result_", ""))))
-  # Rename columns
-  names(df)[which(names(df) == "Factor_Name")] <- "Variable"
-  names(df)[which(names(df) == "MACRs")] <- "Value"
-  return(df)
-}
-
-# Apply the function to each file
-processed_dfs_soc <- lapply(file_paths_soc, process_file)
-
-# Combine all data frames into one
-MACR_soc <- do.call(rbind, processed_dfs_soc)
-
-# ----------------------
-# PHY
-# List of file paths: PHY
-file_paths_phy <- c("~/Documents/Uni/Master/Masterarbeit/R/OAT/MACR/phy1_raster/phy1_raster_macr.csv",
-                "~/Documents/Uni/Master/Masterarbeit/R/OAT/MACR/phy2_raster/phy2_raster_macr.csv",
-                "~/Documents/Uni/Master/Masterarbeit/R/OAT/MACR/phy3_raster/phy3_raster_macr.csv",
-                "~/Documents/Uni/Master/Masterarbeit/R/OAT/MACR/phy4_raster/phy4_raster_macr.csv")
-
-# Function to process each file
-process_file <- function(file_path) {
-  df <- read.csv(file_path)  # Read the CSV file
-  # Convert values in the column "CRW" to numeric based on the pattern
-  df$CRW <- as.numeric(ifelse(str_detect(df$CRW, "^result_\\."), 
-                              -as.numeric(str_replace(df$CRW, "^result_\\.", "")), 
-                              as.numeric(str_replace(df$CRW, "^result_", ""))))
-  # Rename columns
-  names(df)[which(names(df) == "Factor_Name")] <- "Variable"
-  names(df)[which(names(df) == "MACRs")] <- "Value"
-  return(df)
-}
 
 # Apply the function to each file
 processed_dfs_phy <- lapply(file_paths_phy, process_file)

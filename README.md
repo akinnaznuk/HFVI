@@ -145,9 +145,10 @@ zoo : 1.8-12
 
 ## Reproducibility Instructions
 1.	Clone this repository: git clone <repository_url>
-2.	Open the R project file (.Rproj) in RStudio (recommended).
+	Alternatively: Download .zip folder and unpack
+2.	Open the R project file (.Rproj) in RStudio.
 3.	Ensure the working directory is set to the repository root.
-4.	Execute scripts in the following order: 
+4.	Open scripts and execute in the following order: 
 	- scripts/AHP_analysis.Rmd
 	- scripts/FAHP_analysis.Rmd
 	- scripts/HFVI_calculation.Rmd

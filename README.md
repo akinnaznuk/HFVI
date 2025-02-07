@@ -1,6 +1,6 @@
 # Humanitarian Flood Vulnerability Index (HFVI): Weight calculation and Case Study Application & Analysis
 
-This repository (HFVI.zip) contains all the materials, data, and scripts required to reproduce the Humanitarian Flood Vulnerability Index (HFVI), supporting the publication "Developing a Spatially Explicit Humanitarian Flood Vulnerability Index for Refugee Camps using Fuzzy Multi-Criteria Decision Analysis". It contains the files for the Analytical Hierarchy Process (AHP), Fuzzy Analytical Hierarchy Process (FAHP), and the geospatial Humanitarian Fuzzy Vulnerability Index (HFVI) calculation applied to a refugee camp using synthetic data. 
+This repository (HFVI.zip) contains all the materials, data, and scripts required to reproduce the Humanitarian Flood Vulnerability Index (HFVI), supporting the publication "Developing a Spatially Explicit Humanitarian Flood Vulnerability Index for Refugee Settlements using Fuzzy Multi-Criteria Decision Analysis". It contains the files for the Analytical Hierarchy Process (AHP), Fuzzy Analytical Hierarchy Process (FAHP), and the geospatial Humanitarian Fuzzy Vulnerability Index (HFVI) calculation applied to a refugee settlement using synthetic data. 
 
 ## Overview
 This repository contains three main scripts, each performing a specific part of the workflow:
@@ -39,9 +39,9 @@ hfvi_project/
 ### Input Data
 #### data/shp: Geospatial data in Shapefile format (Spatial geometries of features) used for the indicators raster calculation.
 
-**Global Data**: The extracts of the global datasets used for the fictional case study example are provided in the data folder for a fictional camp in Rwanda. All data extracts are downloaded in January 2025. The extract is clipped to the extent of the refugee camp under study in the HFVI_calculation.Rmd to fit the extent of the camp.
+**Global Data**: The extracts of the global datasets used for the fictional case study example are provided in the data folder for a fictional settlement in Rwanda. All data extracts are downloaded in January 2025. The extract is clipped to the extent of the refugee settlement under study in the HFVI_calculation.Rmd to fit the extent of the settlement.
 
-When applying the HFVI to a different camp, the global data can be openly extracted from the following sources:
+When applying the HFVI to a different settlement, the global data can be openly extracted from the following sources:
 
 - Google Buildings: Google Research. (2021). Open Buildings dataset v2 (Release 2021) [Data set]. Available at: https://sites.research.google/open-buildings/#dataformat
 
@@ -51,9 +51,9 @@ When applying the HFVI to a different camp, the global data can be openly extrac
 
 **Local Data**: Synthetically generated local data
 
-The local data used for the original study cannot be published due to sensitivity restrictions. To demonstrate the workflow and performance of the HFVI, synthetic data was generated for a fictive refugee camp in Rwanda. This synthetic data is randomly generated and was constructed in ArcGIS Pro, with hand-drawn features stored as shapefiles. These shapefiles are provided in the data folder. 
+The local data used for the original study cannot be published due to sensitivity restrictions. To demonstrate the workflow and performance of the HFVI, synthetic data was generated for a fictive refugee settlement in Rwanda. This synthetic data is randomly generated and was constructed in ArcGIS Pro, with hand-drawn features stored as shapefiles. These shapefiles are provided in the data folder. 
 
-For implementing the HFVI in real-world cases, local data should be collected through official camp maps and participatory workshops. Official camp information is often provided by organizations like the UNHCR. Real-world local data should be stored as shapefiles in a format analogous to the pseudo data provided in this repository.
+For implementing the HFVI in real-world cases, local data should be collected through official settlement maps and participatory workshops. Official settlement information is often provided by organizations like the UNHCR. Real-world local data should be stored as shapefiles in a format analogous to the pseudo data provided in this repository.
 
 #### data/ahp
 
@@ -86,7 +86,7 @@ This script calculates the Fuzzy AHP weights based on the PCMs generated in `AHP
 - Computes fuzzy weights and defuzzifies them for HFVI calculation.
 
 ### HFVI Calculation: HFVI_calculation.Rmd
-This script calculates the HFVI applied to a case study. It uses global and synthetic local data of a refugee camp setting (fictional refugee camp) as inputs to create individual indicator raster layers for subsequent 
+This script calculates the HFVI applied to a case study. It uses global and synthetic local data of a refugee settlement setting (fictional refugee settlement) as inputs to create individual indicator raster layers for subsequent 
 spatial overlay using the HFVI equation with the FAHP weights obtained from `AHP_analysis.Rmd` and `FAHP_analysis.Rmd`. Further spatial analysis (spatial autocorrelation and indicator correlation matrix) is performed,  followed by sensitivity and uncertainty analysis using the FAHP-OAT Method (with fuzzy ranges from `FAHP_analysis.Rmd`). Finally, the script generates visualizations of the HFVI and uncertainty maps.
 
 •	Reads processed indicator layers.
@@ -162,4 +162,4 @@ Expected Execution Times:
 
 
 ## Credits
-Anonymous. (2025). "Computational Workflow and Data for Developing a Flood Vulnerability Index for Refugee Camps Using Fuzzy Multi-Criteria Decision Analysis". GitHub repository. https://github.com/akinnaznuk/HFVI
+Anonymous. (2025). "Computational Workflow and Data for Developing a Flood Vulnerability Index for Refugee Settlements Using Fuzzy Multi-Criteria Decision Analysis". GitHub repository. https://github.com/akinnaznuk/HFVI
